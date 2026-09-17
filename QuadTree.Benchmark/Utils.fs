@@ -8,7 +8,7 @@ type MyConfig() =
 
 let DIR_WITH_MATRICES = "../../../../../../../data/"
 
-let readMtx path directed =
+let readMtxRaw path directed =
     let getCooList (linewords: seq<string array>) =
         linewords
         |> Seq.map (fun x ->
@@ -23,7 +23,7 @@ let readMtx path directed =
 
     let lines = File.ReadLines(path)
     let removedComments = lines |> Seq.skipWhile (fun s -> s.[0] = '%')
-    let linewords = removedComments |> Seq.map (fun s -> s.Split " ")
+    let linewords = removedComments |> Seq.map (fun s -> s.Split [|' '|])
     let first = Seq.head linewords
 
     let nrows, ncols, nnz = uint64 first.[0], uint64 first.[1], int first.[2]
@@ -33,7 +33,11 @@ let readMtx path directed =
     let lst = getCooList tl
 
     if (directed && nnz <> lst.Length) || ((not directed) && nnz * 2 <> lst.Length) then
-        failwithf "Incorrect matrix reading. Path: %A expected nnz: %A actual nnz: %A" path (nnz * 2) lst.Length
+        failwithf "Incorrect matrix reading. Path: %A expected nnz: %A actual nnz: %A" path (if directed then nnz else nnz * 2) lst.Length
 
-    Matrix.CoordinateList(nrows * 1UL<Matrix.nrows>, nrows * 1UL<Matrix.ncols>, lst)
-    |> Matrix.fromCoordinateList
+    let coo = Matrix.CoordinateList(nrows * 1UL<Matrix.nrows>, ncols * 1UL<Matrix.ncols>, lst)
+    let qt = Matrix.fromCoordinateList coo
+    (coo, qt)
+
+let readMtx path directed =
+    readMtxRaw path directed |> snd

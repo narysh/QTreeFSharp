@@ -4,6 +4,7 @@ open System
 open Xunit
 
 open Matrix
+open COO
 open Vector
 open Common
 

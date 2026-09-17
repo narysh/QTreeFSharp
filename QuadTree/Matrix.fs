@@ -41,6 +41,7 @@ type SparseMatrix<'value> =
 type Error =
     | InconsistentStructureOfStorages
     | InconsistentSizeOfArguments
+    | InvalidElementIndex
 
 
 let mkNode x1 x2 x3 x4 =
@@ -53,6 +54,12 @@ type rowindex
 
 [<Measure>]
 type colindex
+
+let getQuadrantCoords (pr, pc) halfSize =
+    (pr, pc), // NORTH WEST
+    (pr, pc + halfSize * 1UL<colindex>), // NORTH EAST
+    (pr + halfSize * 1UL<rowindex>, pc), // SOUTH WEST
+    (pr + halfSize * 1UL<rowindex>, pc + halfSize * 1UL<colindex>) // SOUTH EAST
 
 type COOEntry<'value> = uint64<rowindex> * uint64<colindex> * 'value
 
@@ -67,18 +74,11 @@ type CoordinateList<'value> =
           ncols = _ncols
           list = _list }
 
-let private getQuadrantCoords (pr, pc) halfSize =
-    (pr, pc), // NORTH WEST
-    (pr, pc + halfSize * 1UL<colindex>), // NORTH EAST
-    (pr + halfSize * 1UL<rowindex>, pc), // SOUTH WEST
-    (pr + halfSize * 1UL<rowindex>, pc + halfSize * 1UL<colindex>) // SOUTH EAST
-
 let fromCoordinateList (coo: CoordinateList<'a>) =
     let nvals = (uint64 <| List.length coo.list) * 1UL<nvals>
     let nrows = coo.nrows
     let ncols = coo.ncols
 
-    // the resulting matrix is always square
     let storageSize = getNearestUpperPowerOfTwo (max (uint64 nrows) (uint64 ncols))
 
     let isEntryInQuadrant (pr, pc) size (entry: COOEntry<'a>) =
@@ -139,6 +139,120 @@ let toCoordinateList (matrix: SparseMatrix<'a>) =
 
 let empty nrows ncols =
     fromCoordinateList (CoordinateList(nrows, ncols, []))
+
+let get (matrix: SparseMatrix<'a>) (row: uint64<rowindex>) (col: uint64<colindex>) : Result<option<'a>, Error> =
+    if uint64 row >= uint64 matrix.nrows || uint64 col >= uint64 matrix.ncols then
+        Error Error.InvalidElementIndex
+    else
+        let rec inner tree (pr: uint64<rowindex>) (pc: uint64<colindex>) (size: uint64) =
+            match tree with
+            | Leaf Dummy -> None
+            | Leaf(UserValue v) -> v
+            | Node(nw, ne, sw, se) ->
+                let halfSize = size / 2UL
+                let midR = pr + halfSize * 1UL<rowindex>
+                let midC = pc + halfSize * 1UL<colindex>
+
+                if uint64 row < uint64 midR then
+                    if uint64 col < uint64 midC then
+                        inner nw pr pc halfSize
+                    else
+                        inner ne pr midC halfSize
+                else if uint64 col < uint64 midC then
+                    inner sw midR pc halfSize
+                else
+                    inner se midR midC halfSize
+
+        Ok(inner matrix.storage.data (0UL<rowindex>) (0UL<colindex>) (uint64 matrix.storage.size))
+
+let set
+    (matrix: SparseMatrix<'a>)
+    (row: uint64<rowindex>)
+    (col: uint64<colindex>)
+    (value: 'a)
+    : Result<SparseMatrix<'a>, Error> =
+    if uint64 row >= uint64 matrix.nrows || uint64 col >= uint64 matrix.ncols then
+        Error Error.InvalidElementIndex
+    else
+        let rec inner tree (pr: uint64<rowindex>) (pc: uint64<colindex>) (size: uint64) =
+            let halfSize = size / 2UL
+
+            if size = 1UL then
+                match tree with
+                | Leaf(UserValue oldVal) ->
+                    let newVal = Some value
+
+                    let delta =
+                        match newVal, oldVal with
+                        | Some _, None -> 1L
+                        | None, Some _ -> -1L
+                        | _ -> 0L
+
+                    Leaf(UserValue newVal), delta
+                | Leaf Dummy -> Leaf(UserValue(Some value)), 1L
+                | _ -> failwith "Unreachable"
+            else
+                let midR = pr + halfSize * 1UL<rowindex>
+                let midC = pc + halfSize * 1UL<colindex>
+
+                let (nw, ne, sw, se) =
+                    match tree with
+                    | Node(nw, ne, sw, se) -> nw, ne, sw, se
+                    | Leaf v -> Leaf v, Leaf v, Leaf v, Leaf v
+
+                let newChild, delta =
+                    if uint64 row < uint64 midR then
+                        if uint64 col < uint64 midC then
+                            inner nw pr pc halfSize
+                        else
+                            inner ne pr midC halfSize
+                    else if uint64 col < uint64 midC then
+                        inner sw midR pc halfSize
+                    else
+                        inner se midR midC halfSize
+
+                if uint64 row < uint64 midR then
+                    if uint64 col < uint64 midC then
+                        mkNode newChild ne sw se, delta
+                    else
+                        mkNode nw newChild sw se, delta
+                else if uint64 col < uint64 midC then
+                    mkNode nw ne newChild se, delta
+                else
+                    mkNode nw ne sw newChild, delta
+
+        let storage, deltaNNZ =
+            inner matrix.storage.data (0UL<rowindex>) (0UL<colindex>) (uint64 matrix.storage.size)
+
+        let nvals = uint64 (int64 matrix.nvals + deltaNNZ) * 1UL<nvals>
+        Ok(SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage)))
+
+let map (matrix: SparseMatrix<_>) f =
+    let rec inner (size: uint64<storageSize>) matrix =
+        match matrix with
+        | Leaf(Dummy) -> Leaf(Dummy), 0UL<nvals>
+        | Leaf(UserValue(v)) ->
+            let res = f v
+
+            let nnz =
+                match res with
+                | None -> 0UL<nvals>
+                | _ -> (uint64 size) * (uint64 size) * 1UL<nvals>
+
+            Leaf(UserValue(res)), nnz
+        | Node(x1, x2, x3, x4) ->
+            let new_size = size / 2UL
+
+            let t1, nvals1 = inner new_size x1
+            let t2, nvals2 = inner new_size x2
+            let t3, nvals3 = inner new_size x3
+            let t4, nvals4 = inner new_size x4
+
+            mkNode t1 t2 t3 t4, nvals1 + nvals2 + nvals3 + nvals4
+
+    let storage, nvals = inner matrix.storage.size matrix.storage.data
+
+    SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage))
 
 let map2 (matrix1: SparseMatrix<_>) (matrix2: SparseMatrix<_>) f =
     let rec inner (size: uint64<storageSize>) matrix1 matrix2 =
