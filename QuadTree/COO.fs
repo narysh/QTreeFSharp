@@ -51,19 +51,78 @@ let cooUpdate
         Ok(CoordinateList(coo.nrows, coo.ncols, List.rev acc))
 
 
-let cooMap (coo: CoordinateList<'a>) f =
-    let updatedList = coo.list |> List.map (fun (i, j, v) -> (i, j, f (Some v)))
+let private applyBinary
+    (op: BinaryOp<'a, 'b, 'c>)
+    (i: uint64<rowindex>)
+    (j: uint64<colindex>)
+    (v1: Option<'a>)
+    (v2: Option<'b>)
+    : Option<'c> =
+    match op with
+    | BinaryOp.ValuesOnly f ->
+        match v1, v2 with
+        | Some a, Some b -> f a b
+        | _ -> None
+    | BinaryOp.ValuesOnlyIndexed f ->
+        match v1, v2 with
+        | Some a, Some b -> f i j a b
+        | _ -> None
+    | BinaryOp.AllCells f -> f v1 v2
+    | BinaryOp.AllCellsIndexed f -> f i j v1 v2
+    | BinaryOp.AtLeastOneValue f ->
+        match v1, v2 with
+        | Some a, Some b -> f (AtLeastOne.Both(a, b))
+        | Some a, None -> f (AtLeastOne.Left a)
+        | None, Some b -> f (AtLeastOne.Right b)
+        | None, None -> None
+    | BinaryOp.AtLeastOneValueIndexed f ->
+        match v1, v2 with
+        | Some a, Some b -> f i j (AtLeastOne.Both(a, b))
+        | Some a, None -> f i j (AtLeastOne.Left a)
+        | None, Some b -> f i j (AtLeastOne.Right b)
+        | None, None -> None
+    | BinaryOp.LeftValuesOnly f ->
+        match v1 with
+        | Some a -> f a v2
+        | None -> None
+    | BinaryOp.LeftValuesOnlyIndexed f ->
+        match v1 with
+        | Some a -> f i j a v2
+        | None -> None
 
+let private cooMapInner (coo: CoordinateList<'a>) (op: UnaryOp<'a, 'b>) : CoordinateList<'b> =
     let result =
-        match f None with
-        | None ->
-            updatedList
-            |> List.choose (fun (i, j, v) -> v |> Option.map (fun v -> (i, j, v)))
-        | Some fnone ->
-            let lookup =
-                updatedList
-                |> List.map (fun (i, j, v) -> ((i, j), v))
-                |> Map.ofList
+        match op with
+        | UnaryOp.ValuesOnly f ->
+            coo.list
+            |> List.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
+        | UnaryOp.ValuesOnlyIndexed f ->
+            coo.list
+            |> List.choose (fun (i, j, v) -> f i j v |> Option.map (fun r -> (i, j, r)))
+        | UnaryOp.AllCells f ->
+            match f None with
+            | None ->
+                coo.list
+                |> List.choose (fun (i, j, v) -> f (Some v) |> Option.map (fun r -> (i, j, r)))
+            | Some fnone ->
+                let lookup = coo.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+
+                [ for i in range (uint64 coo.nrows) do
+                      let ri = i * 1UL<rowindex>
+
+                      for j in range (uint64 coo.ncols) do
+                          let cj = j * 1UL<colindex>
+
+                          let res =
+                              match Map.tryFind (ri, cj) lookup with
+                              | Some value -> f (Some value)
+                              | None -> Some fnone
+
+                          match res with
+                          | Some value -> yield (ri, cj, value)
+                          | None -> () ]
+        | UnaryOp.AllCellsIndexed f ->
+            let mutable rest = coo.list
 
             [ for i in range (uint64 coo.nrows) do
                   let ri = i * 1UL<rowindex>
@@ -71,127 +130,152 @@ let cooMap (coo: CoordinateList<'a>) f =
                   for j in range (uint64 coo.ncols) do
                       let cj = j * 1UL<colindex>
 
-                      match Map.tryFind (ri, cj) lookup with
-                      | Some(Some value) -> yield (ri, cj, value)
-                      | Some None -> ()
-                      | None -> yield (ri, cj, fnone) ]
+                      let value =
+                          match rest with
+                          | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
+                              rest <- tail
+                              Some ev
+                          | _ -> None
+
+                      match f ri cj value with
+                      | Some value -> yield (ri, cj, value)
+                      | None -> () ]
 
     CoordinateList(coo.nrows, coo.ncols, result)
+
+let private mergeBinary (l1: COOEntry<'a> list) (l2: COOEntry<'b> list) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c> list =
+    let mutable acc = []
+    let mutable rest1 = l1
+    let mutable rest2 = l2
+
+    let emit i j v1 v2 =
+        match applyBinary op i j v1 v2 with
+        | Some r -> acc <- (i, j, r) :: acc
+        | None -> ()
+
+    while rest1 <> [] || rest2 <> [] do
+        match rest1, rest2 with
+        | [], [] -> ()
+        | (i, j, v1) :: t1, [] ->
+            emit i j (Some v1) None
+            rest1 <- t1
+        | [], (i, j, v2) :: t2 ->
+            emit i j None (Some v2)
+            rest2 <- t2
+        | (i1, j1, v1) :: t1, (i2, j2, v2) :: t2 ->
+            if i1 = i2 && j1 = j2 then
+                emit i1 j1 (Some v1) (Some v2)
+                rest1 <- t1
+                rest2 <- t2
+            elif (i1, j1) < (i2, j2) then
+                emit i1 j1 (Some v1) None
+                rest1 <- t1
+            else
+                emit i2 j2 None (Some v2)
+                rest2 <- t2
+
+    List.rev acc
+
+let private cooMap2Inner
+    (coo1: CoordinateList<'a>)
+    (coo2: CoordinateList<'b>)
+    (op: BinaryOp<'a, 'b, 'c>)
+    : Result<CoordinateList<'c>, Error> =
+    if uint64 coo1.nrows <> uint64 coo2.nrows || uint64 coo1.ncols <> uint64 coo2.ncols then
+        Error Error.InconsistentSizeOfArguments
+    else
+        let nrows = coo1.nrows
+        let ncols = coo1.ncols
+
+        let result =
+            match op with
+            | BinaryOp.AllCells f ->
+                match f None None with
+                | None -> mergeBinary coo1.list coo2.list op
+                | Some _ ->
+                    let lookup1 = coo1.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+
+                    let lookup2 = coo2.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+
+                    [ for i in range (uint64 nrows) do
+                          let ri = i * 1UL<rowindex>
+
+                          for j in range (uint64 ncols) do
+                              let cj = j * 1UL<colindex>
+
+                              match f (Map.tryFind (ri, cj) lookup1) (Map.tryFind (ri, cj) lookup2) with
+                              | Some value -> yield (ri, cj, value)
+                              | None -> () ]
+            | BinaryOp.AllCellsIndexed f ->
+                let mutable rest1 = coo1.list
+                let mutable rest2 = coo2.list
+
+                [ for i in range (uint64 nrows) do
+                      let ri = i * 1UL<rowindex>
+
+                      for j in range (uint64 ncols) do
+                          let cj = j * 1UL<colindex>
+
+                          let v1 =
+                              match rest1 with
+                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
+                                  rest1 <- tail
+                                  Some ev
+                              | _ -> None
+
+                          let v2 =
+                              match rest2 with
+                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
+                                  rest2 <- tail
+                                  Some ev
+                              | _ -> None
+
+                          match f ri cj v1 v2 with
+                          | Some value -> yield (ri, cj, value)
+                          | None -> () ]
+            | _ -> mergeBinary coo1.list coo2.list op
+
+        CoordinateList(nrows, ncols, result) |> Ok
+
+let cooMap (coo: CoordinateList<'a>) f = cooMapInner coo (UnaryOp.AllCells f)
+
+let cooMapValues (coo: CoordinateList<'a>) f = cooMapInner coo (UnaryOp.ValuesOnly f)
 
 let cooMapi (coo: CoordinateList<'a>) f =
-    let lookup =
-        coo.list
-        |> List.map (fun (i, j, v) -> ((i, j), v))
-        |> Map.ofList
+    cooMapInner coo (UnaryOp.AllCellsIndexed f)
 
-    let result =
-        [ for i in range (uint64 coo.nrows) do
-              let ri = i * 1UL<rowindex>
-
-              for j in range (uint64 coo.ncols) do
-                  let cj = j * 1UL<colindex>
-
-                  let res = f ri cj (Map.tryFind (ri, cj) lookup)
-
-                  match res with
-                  | Some value -> yield (ri, cj, value)
-                  | None -> () ]
-
-    CoordinateList(coo.nrows, coo.ncols, result)
+let cooMapiValues (coo: CoordinateList<'a>) f =
+    cooMapInner coo (UnaryOp.ValuesOnlyIndexed f)
 
 let cooMap2 (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
-    let mutable acc = []
-    let mutable l1 = coo1.list
-    let mutable l2 = coo2.list
+    cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
 
-    while l1 <> [] || l2 <> [] do
-        match l1, l2 with
-        | [], [] -> ()
-        | (i1, j1, v1) :: t1, [] ->
-            let r = f (Some v1) None
-            acc <- (i1, j1, r) :: acc
-            l1 <- t1
-        | [], (i2, j2, v2) :: t2 ->
-            let r = f None (Some v2)
-            acc <- (i2, j2, r) :: acc
-            l2 <- t2
-        | (i1, j1, v1) :: t1, (i2, j2, v2) :: t2 ->
-            if i1 = i2 && j1 = j2 then
-                let r = f (Some v1) (Some v2)
-                acc <- (i1, j1, r) :: acc
-                l1 <- t1
-                l2 <- t2
-            elif (i1, j1) < (i2, j2) then
-                let r = f (Some v1) None
-                acc <- (i1, j1, r) :: acc
-                l1 <- t1
-            else
-                let r = f None (Some v2)
-                acc <- (i2, j2, r) :: acc
-                l2 <- t2
+let cooMap2Values (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnly f)
 
-    let updatedList = List.rev acc
+let cooMap2AllCells (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
 
-    let result =
-        match f None None with
-        | None ->
-            updatedList
-            |> List.choose (fun (i, j, v) -> v |> Option.map (fun v -> (i, j, v)))
-        | Some fnone ->
-            let lookup =
-                updatedList
-                |> List.map (fun (i, j, v) -> ((i, j), v))
-                |> Map.ofList
+let cooMap2AtLeastOne (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValue f)
 
-            [ for i in range (uint64 coo1.nrows) do
-                  let ri = i * 1UL<rowindex>
-
-                  for j in range (uint64 coo1.ncols) do
-                      let cj = j * 1UL<colindex>
-
-                      match Map.tryFind (ri, cj) lookup with
-                      | Some(Some value) -> yield (ri, cj, value)
-                      | Some None -> ()
-                      | None -> yield (ri, cj, fnone) ]
-
-    CoordinateList(coo1.nrows, coo1.ncols, result)
+let cooMap2LeftValues (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.LeftValuesOnly f)
 
 let cooMap2i (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
-    let mutable acc = []
-    let mutable l1 = coo1.list
-    let mutable l2 = coo2.list
+    cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
 
-    while l1 <> [] || l2 <> [] do
-        match l1, l2 with
-        | [], [] -> ()
-        | (i1, j1, v1) :: t1, [] ->
-            let r = f i1 j1 (Some v1) None
-            acc <- (i1, j1, r) :: acc
-            l1 <- t1
-        | [], (i2, j2, v2) :: t2 ->
-            let r = f i2 j2 None (Some v2)
-            acc <- (i2, j2, r) :: acc
-            l2 <- t2
-        | (i1, j1, v1) :: t1, (i2, j2, v2) :: t2 ->
-            if i1 = i2 && j1 = j2 then
-                let r = f i1 j1 (Some v1) (Some v2)
-                acc <- (i1, j1, r) :: acc
-                l1 <- t1
-                l2 <- t2
-            elif (i1, j1) < (i2, j2) then
-                let r = f i1 j1 (Some v1) None
-                acc <- (i1, j1, r) :: acc
-                l1 <- t1
-            else
-                let r = f i2 j2 None (Some v2)
-                acc <- (i2, j2, r) :: acc
-                l2 <- t2
+let cooMap2iValues (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnlyIndexed f)
 
-    let result =
-        List.rev acc
-        |> List.choose (fun (i, j, v) -> v |> Option.map (fun v -> (i, j, v)))
+let cooMap2iAllCells (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
 
-    CoordinateList(coo1.nrows, coo1.ncols, result)
+let cooMap2iAtLeastOne (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValueIndexed f)
+
+let cooMap2iLeftValues (coo1: CoordinateList<'a>) (coo2: CoordinateList<'b>) f =
+    cooMap2Inner coo1 coo2 (BinaryOp.LeftValuesOnlyIndexed f)
 
 let mxmcoo
     (op_add: 'c option -> 'c option -> 'c option)

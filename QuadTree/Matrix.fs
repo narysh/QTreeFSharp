@@ -227,187 +227,275 @@ let set
         let nvals = uint64 (int64 matrix.nvals + deltaNNZ) * 1UL<nvals>
         Ok(SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage)))
 
-let map (matrix: SparseMatrix<_>) f =
-    let rec inner (size: uint64<storageSize>) matrix =
-        match matrix with
-        | Leaf(Dummy) -> Leaf(Dummy), 0UL<nvals>
-        | Leaf(UserValue(v)) ->
-            let res = f v
+type UnaryOp<'a, 'b> =
+    | ValuesOnly of ('a -> Option<'b>)
+    | ValuesOnlyIndexed of (uint64<rowindex> -> uint64<colindex> -> 'a -> Option<'b>)
+    | AllCells of (Option<'a> -> Option<'b>)
+    | AllCellsIndexed of (uint64<rowindex> -> uint64<colindex> -> Option<'a> -> Option<'b>)
 
-            let nnz =
-                match res with
-                | None -> 0UL<nvals>
-                | _ -> (uint64 size) * (uint64 size) * 1UL<nvals>
+let private mapInner (matrix: SparseMatrix<'a>) (op: UnaryOp<'a, 'b>) : SparseMatrix<'b> =
+    let rec inner
+        (prow: uint64<rowindex>)
+        (pcol: uint64<colindex>)
+        (size: uint64<storageSize>)
+        (tree: qtree<Option<'a>>)
+        : qtree<Option<'b>> * uint64<nvals> =
+        match tree with
+        | Node(nw, ne, sw, se) ->
+            let halfSize = size / 2UL
 
-            Leaf(UserValue(res)), nnz
-        | Node(x1, x2, x3, x4) ->
-            let new_size = size / 2UL
+            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
+                getQuadrantCoords (prow, pcol) (uint64 halfSize)
 
-            let t1, nvals1 = inner new_size x1
-            let t2, nvals2 = inner new_size x2
-            let t3, nvals3 = inner new_size x3
-            let t4, nvals4 = inner new_size x4
+            let t1, nvals1 = inner nwR nwC halfSize nw
+            let t2, nvals2 = inner neR neC halfSize ne
+            let t3, nvals3 = inner swR swC halfSize sw
+            let t4, nvals4 = inner seR seC halfSize se
 
             mkNode t1 t2 t3 t4, nvals1 + nvals2 + nvals3 + nvals4
-
-    let storage, nvals = inner matrix.storage.size matrix.storage.data
-
-    SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage))
-
-let map2 (matrix1: SparseMatrix<_>) (matrix2: SparseMatrix<_>) f =
-    let rec inner (size: uint64<storageSize>) matrix1 matrix2 =
-        let _do x1 x2 x3 x4 y1 y2 y3 y4 =
-            let new_size = size / 2UL
-
-            match (inner new_size x1 y1), (inner new_size x2 y2), (inner new_size x3 y3), (inner new_size x4 y4) with
-            | Ok((new_t1, nvals1)), Ok((new_t2, nvals2)), Ok((new_t3, nvals3)), Ok((new_t4, nvals4)) ->
-                ((mkNode new_t1 new_t2 new_t3 new_t4), nvals1 + nvals2 + nvals3 + nvals4) |> Ok
-            | Error(e), _, _, _
-            | _, Error(e), _, _
-            | _, _, Error(e), _
-            | _, _, _, Error(e) -> Error(e)
-
-        match (matrix1, matrix2) with
-        | Leaf(Dummy), Leaf(Dummy) -> Ok(Leaf(Dummy), 0UL<nvals>)
-        | Leaf(UserValue(v1)), Leaf(UserValue(v2)) ->
-            let res = f v1 v2
-
-            let nnz =
-                match res with
-                | None -> 0UL<nvals>
-                | _ -> (uint64 size) * (uint64 size) * 1UL<nvals>
-
-            (Leaf(UserValue(res)), nnz) |> Ok
-
-        | Node(x1, x2, x3, x4), Node(y1, y2, y3, y4) -> _do x1 x2 x3 x4 y1 y2 y3 y4
-        | Node(x1, x2, x3, x4), Leaf(v) -> _do x1 x2 x3 x4 matrix2 matrix2 matrix2 matrix2
-        | Leaf(v), Node(x1, x2, x3, x4) -> _do matrix1 matrix1 matrix1 matrix1 x1 x2 x3 x4
-        | (x, y) -> Error Error.InconsistentStructureOfStorages
-
-    if matrix1.nrows = matrix2.nrows && matrix1.ncols = matrix2.ncols then
-        match inner matrix1.storage.size matrix1.storage.data matrix2.storage.data with
-        | Error x -> Error x
-        | Ok(storage, nvals) ->
-            (SparseMatrix(matrix1.nrows, matrix1.ncols, nvals, (Storage(matrix1.storage.size, storage))))
-            |> Ok
-    else
-        Error Error.InconsistentSizeOfArguments
-
-let map2i (matrix1: SparseMatrix<_>) (matrix2: SparseMatrix<_>) f =
-    let rec inner (prow: uint64<rowindex>) (pcol: uint64<colindex>) (size: uint64<storageSize>) matrix1 matrix2 =
-        match (matrix1, matrix2) with
-        | Node(x1, x2, x3, x4), Node(y1, y2, y3, y4) ->
-            let halfSize = size / 2UL
-
-            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
-                getQuadrantCoords (prow, pcol) (uint64 halfSize)
-
-            let t1, nvals1 = inner nwR nwC halfSize x1 y1
-            let t2, nvals2 = inner neR neC halfSize x2 y2
-            let t3, nvals3 = inner swR swC halfSize x3 y3
-            let t4, nvals4 = inner seR seC halfSize x4 y4
-            (mkNode t1 t2 t3 t4), nvals1 + nvals2 + nvals3 + nvals4
-        | Node(x1, x2, x3, x4), Leaf(v2) ->
-            let halfSize = size / 2UL
-
-            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
-                getQuadrantCoords (prow, pcol) (uint64 halfSize)
-
-            let t1, nvals1 = inner nwR nwC halfSize x1 (Leaf(v2))
-            let t2, nvals2 = inner neR neC halfSize x2 (Leaf(v2))
-            let t3, nvals3 = inner swR swC halfSize x3 (Leaf(v2))
-            let t4, nvals4 = inner seR seC halfSize x4 (Leaf(v2))
-            (mkNode t1 t2 t3 t4), nvals1 + nvals2 + nvals3 + nvals4
-        | Leaf(v1), Node(y1, y2, y3, y4) ->
-            let halfSize = size / 2UL
-
-            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
-                getQuadrantCoords (prow, pcol) (uint64 halfSize)
-
-            let t1, nvals1 = inner nwR nwC halfSize (Leaf(v1)) y1
-            let t2, nvals2 = inner neR neC halfSize (Leaf(v1)) y2
-            let t3, nvals3 = inner swR swC halfSize (Leaf(v1)) y3
-            let t4, nvals4 = inner seR seC halfSize (Leaf(v1)) y4
-            (mkNode t1 t2 t3 t4), nvals1 + nvals2 + nvals3 + nvals4
-        | Leaf(Dummy), Leaf(Dummy) -> Leaf(Dummy), 0UL<nvals>
-        | Leaf(UserValue(v1)), Leaf(UserValue(v2)) ->
-            let res = f prow pcol v1 v2
-
-            let nnz =
-                match res with
-                | Some _ -> 1UL<nvals>
-                | None -> 0UL<nvals>
-
-            Leaf(UserValue(res)), nnz
-        | Leaf(UserValue(v)), Leaf(Dummy) ->
-            let res = f prow pcol v None
-
-            let nnz =
-                match res with
-                | Some _ -> 1UL<nvals>
-                | None -> 0UL<nvals>
-
-            Leaf(UserValue(res)), nnz
-        | Leaf(Dummy), Leaf(UserValue(v)) ->
-            let res = f prow pcol None v
-
-            let nnz =
-                match res with
-                | Some _ -> 1UL<nvals>
-                | None -> 0UL<nvals>
-
-            Leaf(UserValue(res)), nnz
-
-    if matrix1.nrows = matrix2.nrows && matrix1.ncols = matrix2.ncols then
-        let storage, nvals =
-            inner 0UL<rowindex> 0UL<colindex> matrix1.storage.size matrix1.storage.data matrix2.storage.data
-
-        SparseMatrix(matrix1.nrows, matrix1.ncols, nvals, (Storage(matrix1.storage.size, storage)))
-        |> Ok
-    else
-        Error Error.InconsistentSizeOfArguments
-
-let mapi (matrix: SparseMatrix<'a>) f =
-    let rec inner (prow: uint64<rowindex>) (pcol: uint64<colindex>) (size: uint64<storageSize>) matrix =
-        match matrix with
-        | Node(x1, x2, x3, x4) ->
-            let halfSize = size / 2UL
-
-            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
-                getQuadrantCoords (prow, pcol) (uint64 halfSize)
-
-            let t1, nvals1 = inner nwR nwC halfSize x1
-            let t2, nvals2 = inner neR neC halfSize x2
-            let t3, nvals3 = inner swR swC halfSize x3
-            let t4, nvals4 = inner seR seC halfSize x4
-            (mkNode t1 t2 t3 t4), nvals1 + nvals2 + nvals3 + nvals4
         | Leaf(Dummy) -> Leaf(Dummy), 0UL<nvals>
         | Leaf(UserValue(v)) ->
-            if size = 1UL<storageSize> then
-                let res = f prow pcol v
+            match op with
+            | UnaryOp.ValuesOnly f ->
+                match v with
+                | None -> Leaf(UserValue(None)), 0UL<nvals>
+                | Some v' ->
+                    let res = f v'
 
-                let nnz =
-                    match res with
-                    | Some _ -> 1UL<nvals>
-                    | None -> 0UL<nvals>
+                    let nvals =
+                        if res.IsSome then
+                            (uint64 size) * (uint64 size) * 1UL<nvals>
+                        else
+                            0UL<nvals>
 
-                Leaf(UserValue(res)), nnz
-            else
-                let halfSize = size / 2UL
+                    Leaf(UserValue(res)), nvals
+            | UnaryOp.ValuesOnlyIndexed f ->
+                match v with
+                | None -> Leaf(UserValue(None)), 0UL<nvals>
+                | Some v' ->
+                    if size = 1UL<storageSize> then
+                        let res = f prow pcol v'
+                        let nvals = if res.IsSome then 1UL<nvals> else 0UL<nvals>
+                        Leaf(UserValue(res)), nvals
+                    else
+                        let halfSize = size / 2UL
 
-                let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
-                    getQuadrantCoords (prow, pcol) (uint64 halfSize)
+                        let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
+                            getQuadrantCoords (prow, pcol) (uint64 halfSize)
 
-                let t1, nvals1 = inner nwR nwC halfSize (Leaf(UserValue(v)))
-                let t2, nvals2 = inner neR neC halfSize (Leaf(UserValue(v)))
-                let t3, nvals3 = inner swR swC halfSize (Leaf(UserValue(v)))
-                let t4, nvals4 = inner seR seC halfSize (Leaf(UserValue(v)))
-                (mkNode t1 t2 t3 t4), nvals1 + nvals2 + nvals3 + nvals4
+                        let t1, nvals1 = inner nwR nwC halfSize (Leaf(UserValue(v)))
+                        let t2, nvals2 = inner neR neC halfSize (Leaf(UserValue(v)))
+                        let t3, nvals3 = inner swR swC halfSize (Leaf(UserValue(v)))
+                        let t4, nvals4 = inner seR seC halfSize (Leaf(UserValue(v)))
+                        mkNode t1 t2 t3 t4, nvals1 + nvals2 + nvals3 + nvals4
+            | UnaryOp.AllCells f ->
+                let res = f v
+
+                let nvals =
+                    if res.IsSome then
+                        (uint64 size) * (uint64 size) * 1UL<nvals>
+                    else
+                        0UL<nvals>
+
+                Leaf(UserValue(res)), nvals
+            | UnaryOp.AllCellsIndexed f ->
+                if size = 1UL<storageSize> then
+                    let res = f prow pcol v
+                    let nvals = if res.IsSome then 1UL<nvals> else 0UL<nvals>
+                    Leaf(UserValue(res)), nvals
+                else
+                    let halfSize = size / 2UL
+
+                    let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
+                        getQuadrantCoords (prow, pcol) (uint64 halfSize)
+
+                    let t1, nvals1 = inner nwR nwC halfSize (Leaf(UserValue(v)))
+                    let t2, nvals2 = inner neR neC halfSize (Leaf(UserValue(v)))
+                    let t3, nvals3 = inner swR swC halfSize (Leaf(UserValue(v)))
+                    let t4, nvals4 = inner seR seC halfSize (Leaf(UserValue(v)))
+                    mkNode t1 t2 t3 t4, nvals1 + nvals2 + nvals3 + nvals4
 
     let storage, nvals =
         inner 0UL<rowindex> 0UL<colindex> matrix.storage.size matrix.storage.data
 
-    SparseMatrix(matrix.nrows, matrix.ncols, nvals, (Storage(matrix.storage.size, storage)))
+    SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage))
+
+let map (matrix: SparseMatrix<_>) f = mapInner matrix (UnaryOp.AllCells f)
+
+let mapValues (matrix: SparseMatrix<'a>) f = mapInner matrix (UnaryOp.ValuesOnly f)
+
+type AtLeastOne<'a, 'b> =
+    | Both of 'a * 'b
+    | Left of 'a
+    | Right of 'b
+
+type BinaryOp<'a, 'b, 'c> =
+    | ValuesOnly of ('a -> 'b -> Option<'c>)
+    | ValuesOnlyIndexed of (uint64<rowindex> -> uint64<colindex> -> 'a -> 'b -> Option<'c>)
+    | AllCells of (Option<'a> -> Option<'b> -> Option<'c>)
+    | AllCellsIndexed of (uint64<rowindex> -> uint64<colindex> -> Option<'a> -> Option<'b> -> Option<'c>)
+    | AtLeastOneValue of (AtLeastOne<'a, 'b> -> Option<'c>)
+    | AtLeastOneValueIndexed of (uint64<rowindex> -> uint64<colindex> -> AtLeastOne<'a, 'b> -> Option<'c>)
+    | LeftValuesOnly of ('a -> Option<'b> -> Option<'c>)
+    | LeftValuesOnlyIndexed of (uint64<rowindex> -> uint64<colindex> -> 'a -> Option<'b> -> Option<'c>)
+
+let private applyBinary
+    (op: BinaryOp<'a, 'b, 'c>)
+    (prow: uint64<rowindex>)
+    (pcol: uint64<colindex>)
+    (v1: Option<'a>)
+    (v2: Option<'b>)
+    : Option<'c> =
+    match op with
+    | BinaryOp.ValuesOnly f ->
+        match v1, v2 with
+        | Some a, Some b -> f a b
+        | _ -> None
+    | BinaryOp.ValuesOnlyIndexed f ->
+        match v1, v2 with
+        | Some a, Some b -> f prow pcol a b
+        | _ -> None
+    | BinaryOp.AllCells f -> f v1 v2
+    | BinaryOp.AllCellsIndexed f -> f prow pcol v1 v2
+    | BinaryOp.AtLeastOneValue f ->
+        match v1, v2 with
+        | Some a, Some b -> f (AtLeastOne.Both(a, b))
+        | Some a, None -> f (AtLeastOne.Left a)
+        | None, Some b -> f (AtLeastOne.Right b)
+        | None, None -> None
+    | BinaryOp.AtLeastOneValueIndexed f ->
+        match v1, v2 with
+        | Some a, Some b -> f prow pcol (AtLeastOne.Both(a, b))
+        | Some a, None -> f prow pcol (AtLeastOne.Left a)
+        | None, Some b -> f prow pcol (AtLeastOne.Right b)
+        | None, None -> None
+    | BinaryOp.LeftValuesOnly f ->
+        match v1 with
+        | Some a -> f a v2
+        | None -> None
+    | BinaryOp.LeftValuesOnlyIndexed f ->
+        match v1 with
+        | Some a -> f prow pcol a v2
+        | None -> None
+
+let private isIndexedBinary (op: BinaryOp<'a, 'b, 'c>) =
+    match op with
+    | BinaryOp.ValuesOnlyIndexed _
+    | BinaryOp.AllCellsIndexed _
+    | BinaryOp.AtLeastOneValueIndexed _
+    | BinaryOp.LeftValuesOnlyIndexed _ -> true
+    | _ -> false
+
+let private map2Inner
+    (matrix1: SparseMatrix<'a>)
+    (matrix2: SparseMatrix<'b>)
+    (op: BinaryOp<'a, 'b, 'c>)
+    : Result<SparseMatrix<'c>, Error> =
+    let rec inner
+        (prow: uint64<rowindex>)
+        (pcol: uint64<colindex>)
+        (size: uint64<storageSize>)
+        (tree1: qtree<Option<'a>>)
+        (tree2: qtree<Option<'b>>)
+        : Result<qtree<Option<'c>> * uint64<nvals>, Error> =
+        let split
+            (x1: qtree<Option<'a>>)
+            (x2: qtree<Option<'a>>)
+            (x3: qtree<Option<'a>>)
+            (x4: qtree<Option<'a>>)
+            (y1: qtree<Option<'b>>)
+            (y2: qtree<Option<'b>>)
+            (y3: qtree<Option<'b>>)
+            (y4: qtree<Option<'b>>)
+            =
+            let halfSize = size / 2UL
+
+            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
+                getQuadrantCoords (prow, pcol) (uint64 halfSize)
+
+            match
+                (inner nwR nwC halfSize x1 y1),
+                (inner neR neC halfSize x2 y2),
+                (inner swR swC halfSize x3 y3),
+                (inner seR seC halfSize x4 y4)
+            with
+            | Ok(t1, nvals1), Ok(t2, nvals2), Ok(t3, nvals3), Ok(t4, nvals4) ->
+                Ok(mkNode t1 t2 t3 t4, nvals1 + nvals2 + nvals3 + nvals4)
+            | Error e, _, _, _
+            | _, Error e, _, _
+            | _, _, Error e, _
+            | _, _, _, Error e -> Error e
+
+        match tree1, tree2 with
+        | Node(x1, x2, x3, x4), Node(y1, y2, y3, y4) -> split x1 x2 x3 x4 y1 y2 y3 y4
+        | Node(x1, x2, x3, x4), Leaf(v2) -> split x1 x2 x3 x4 (Leaf(v2)) (Leaf(v2)) (Leaf(v2)) (Leaf(v2))
+        | Leaf(v1), Node(y1, y2, y3, y4) -> split (Leaf(v1)) (Leaf(v1)) (Leaf(v1)) (Leaf(v1)) y1 y2 y3 y4
+        | Leaf(Dummy), Leaf(Dummy) -> Ok(Leaf(Dummy), 0UL<nvals>)
+        | Leaf(UserValue(v1)), Leaf(UserValue(v2)) ->
+            if size > 1UL<storageSize> && isIndexedBinary op then
+                split
+                    (Leaf(UserValue(v1)))
+                    (Leaf(UserValue(v1)))
+                    (Leaf(UserValue(v1)))
+                    (Leaf(UserValue(v1)))
+                    (Leaf(UserValue(v2)))
+                    (Leaf(UserValue(v2)))
+                    (Leaf(UserValue(v2)))
+                    (Leaf(UserValue(v2)))
+            else
+                let res = applyBinary op prow pcol v1 v2
+
+                let nnz =
+                    if res.IsSome then
+                        (uint64 size) * (uint64 size) * 1UL<nvals>
+                    else
+                        0UL<nvals>
+
+                Ok(Leaf(UserValue(res)), nnz)
+        | _ -> Error Error.InconsistentStructureOfStorages
+
+    if matrix1.nrows = matrix2.nrows && matrix1.ncols = matrix2.ncols then
+        inner 0UL<rowindex> 0UL<colindex> matrix1.storage.size matrix1.storage.data matrix2.storage.data
+        |> Result.map (fun (storage, nvals) ->
+            SparseMatrix(matrix1.nrows, matrix1.ncols, nvals, Storage(matrix1.storage.size, storage)))
+    else
+        Error Error.InconsistentSizeOfArguments
+
+let map2 (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.AllCells f)
+
+let map2Values (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.ValuesOnly f)
+
+let map2AllCells (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.AllCells f)
+
+let map2AtLeastOne (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.AtLeastOneValue f)
+
+let map2LeftValues (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.LeftValuesOnly f)
+
+let map2i (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.AllCellsIndexed f)
+
+let map2iValues (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.ValuesOnlyIndexed f)
+
+let map2iAllCells (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.AllCellsIndexed f)
+
+let map2iAtLeastOne (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.AtLeastOneValueIndexed f)
+
+let map2iLeftValues (matrix1: SparseMatrix<'a>) (matrix2: SparseMatrix<'b>) f =
+    map2Inner matrix1 matrix2 (BinaryOp.LeftValuesOnlyIndexed f)
+
+let mapi (matrix: SparseMatrix<'a>) f =
+    mapInner matrix (UnaryOp.AllCellsIndexed f)
+
+let mapiValues (matrix: SparseMatrix<'a>) f =
+    mapInner matrix (UnaryOp.ValuesOnlyIndexed f)
 
 let foldAssociative (folder: 'T option -> 'T option -> 'T option) (state: 'T option) (matrix: SparseMatrix<'T>) =
     let rec traverse tree (size: uint64<storageSize>) (state: 'T option) =

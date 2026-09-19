@@ -647,7 +647,13 @@ let ``Fold sum`` () =
 [<Fact>]
 let ``matrix get existing value`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7); (1UL<rowindex>, 2UL<colindex>, 9) ]))
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 7); (1UL<rowindex>, 2UL<colindex>, 9) ]
+            )
+        )
 
     Assert.Equal(Ok(Some 7), get m 0UL<rowindex> 0UL<colindex>)
     Assert.Equal(Ok(Some 9), get m 1UL<rowindex> 2UL<colindex>)
@@ -655,19 +661,19 @@ let ``matrix get existing value`` () =
 [<Fact>]
 let ``matrix get missing value`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7) ]))
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7) ]))
 
     Assert.Equal(Ok None, get m 1UL<rowindex> 1UL<colindex>)
 
 [<Fact>]
 let ``matrix get out of bounds`` () =
-    let m = fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, []))
+    let m = fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, []))
     Assert.Equal(Error Error.InvalidElementIndex, get m 5UL<rowindex> 5UL<colindex>)
 
 [<Fact>]
 let ``matrix set replaces existing`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7) ]))
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7) ]))
 
     let actual = set m 0UL<rowindex> 0UL<colindex> 99 |> Result.defaultValue m
 
@@ -677,7 +683,7 @@ let ``matrix set replaces existing`` () =
 [<Fact>]
 let ``matrix set inserts new`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7) ]))
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 7) ]))
 
     let actual = set m 2UL<rowindex> 2UL<colindex> 42 |> Result.defaultValue m
 
@@ -685,7 +691,7 @@ let ``matrix set inserts new`` () =
 
 [<Fact>]
 let ``matrix set out of bounds`` () =
-    let m = fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, []))
+    let m = fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, []))
     Assert.Equal(Error Error.InvalidElementIndex, set m 5UL<rowindex> 5UL<colindex> 99)
 
 [<Fact>]
@@ -703,7 +709,13 @@ let ``matrix set then get roundtrip`` () =
 [<Fact>]
 let ``matrix map doubles values`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3); (1UL<rowindex>, 2UL<colindex>, 5) ]))
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 3); (1UL<rowindex>, 2UL<colindex>, 5) ]
+            )
+        )
 
     let result = map m (Option.map (fun v -> v * 2))
 
@@ -714,9 +726,19 @@ let ``matrix map doubles values`` () =
 [<Fact>]
 let ``matrix map filters Some to None`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3); (1UL<rowindex>, 2UL<colindex>, 5) ]))
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 3); (1UL<rowindex>, 2UL<colindex>, 5) ]
+            )
+        )
 
-    let result = map m (fun v -> match v with Some x when x > 4 -> Some x | _ -> None)
+    let result =
+        map m (fun v ->
+            match v with
+            | Some x when x > 4 -> Some x
+            | _ -> None)
 
     Assert.Equal(Ok(None), get result 0UL<rowindex> 0UL<colindex>)
     Assert.Equal(Ok(Some 5), get result 1UL<rowindex> 2UL<colindex>)
@@ -724,9 +746,15 @@ let ``matrix map filters Some to None`` () =
 [<Fact>]
 let ``matrix map fills None with values`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3) ]))
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3) ]))
 
-    let result = map m (fun v -> Some(match v with Some x -> x | None -> 0))
+    let result =
+        map m (fun v ->
+            Some(
+                match v with
+                | Some x -> x
+                | None -> 0
+            ))
 
     Assert.Equal(Ok(Some 3), get result 0UL<rowindex> 0UL<colindex>)
     Assert.Equal(Ok(Some 0), get result 1UL<rowindex> 1UL<colindex>)
@@ -743,10 +771,262 @@ let ``matrix map on empty matrix`` () =
 [<Fact>]
 let ``matrix map nvals updated`` () =
     let m =
-        fromCoordinateList(CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3); (1UL<rowindex>, 2UL<colindex>, 5) ]))
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 3); (1UL<rowindex>, 2UL<colindex>, 5) ]
+            )
+        )
 
     Assert.Equal(2UL, uint64 m.nvals)
 
     let result = map m (fun _ -> None)
 
     Assert.Equal(0UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix mapValues applies only to stored values`` () =
+    let m =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3) ]))
+
+    let result = mapValues m (fun v -> Some(v * 2))
+
+    Assert.Equal(Ok(Some 6), get result 0UL<rowindex> 0UL<colindex>)
+    Assert.Equal(Ok(None), get result 2UL<rowindex> 2UL<colindex>)
+    Assert.Equal(Ok(None), get result 0UL<rowindex> 1UL<colindex>)
+    Assert.Equal(1UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix mapValues can drop stored values`` () =
+    let m =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 3) ]))
+
+    let result = mapValues m (fun _ -> None)
+
+    Assert.Equal(0UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix mapiValues applies only to stored values with indices`` () =
+    let m =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (1UL<rowindex>, 2UL<colindex>, 5) ]))
+
+    let result = mapiValues m (fun i j v -> Some(v + int (uint64 i) + int (uint64 j)))
+
+    Assert.Equal(Ok(Some 8), get result 1UL<rowindex> 2UL<colindex>)
+    Assert.Equal(Ok(None), get result 0UL<rowindex> 0UL<colindex>)
+    Assert.Equal(1UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix mapi expands uniform leaf`` () =
+    let m =
+        SparseMatrix(
+            4UL<nrows>,
+            4UL<ncols>,
+            4UL<nvals>,
+            Storage(4UL<storageSize>, Matrix.qtree.Node(leaf_v 5, leaf_n (), leaf_n (), leaf_n ()))
+        )
+
+    let result =
+        mapi m (fun i j v -> v |> Option.map (fun x -> x + int (uint64 i) + int (uint64 j)))
+
+    Assert.Equal(4UL, uint64 result.nvals)
+    Assert.Equal(Ok(Some 5), get result 0UL<rowindex> 0UL<colindex>)
+    Assert.Equal(Ok(Some 6), get result 0UL<rowindex> 1UL<colindex>)
+    Assert.Equal(Ok(Some 6), get result 1UL<rowindex> 0UL<colindex>)
+    Assert.Equal(Ok(Some 7), get result 1UL<rowindex> 1UL<colindex>)
+
+[<Fact>]
+let ``matrix map2Values applies only where both values present`` () =
+    let m1 =
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 1); (1UL<rowindex>, 1UL<colindex>, 2) ]
+            )
+        )
+
+    let m2 =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 10) ]))
+
+    match map2Values m1 m2 (fun a b -> Some(a + b + 100)) with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(Ok(Some 111), get result 0UL<rowindex> 0UL<colindex>)
+        Assert.Equal(Ok(None), get result 1UL<rowindex> 1UL<colindex>)
+        Assert.Equal(1UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix map2AllCells equals map2`` () =
+    let m1 =
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 1); (1UL<rowindex>, 1UL<colindex>, 2) ]
+            )
+        )
+
+    let m2 =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 10) ]))
+
+    let f a b =
+        match a, b with
+        | Some x, Some y -> Some(x + y)
+        | _ -> None
+
+    Assert.Equal(map2 m1 m2 f, map2AllCells m1 m2 f)
+
+[<Fact>]
+let ``matrix map2AtLeastOne distinguishes both left right`` () =
+    let m1 =
+        fromCoordinateList (
+            CoordinateList(
+                3UL<nrows>,
+                3UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 1); (1UL<rowindex>, 1UL<colindex>, 2) ]
+            )
+        )
+
+    let m2 =
+        fromCoordinateList (
+            CoordinateList(
+                3UL<nrows>,
+                3UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 10); (2UL<rowindex>, 2UL<colindex>, 30) ]
+            )
+        )
+
+    let f =
+        function
+        | AtLeastOne.Both(a, b) -> Some(a + b)
+        | AtLeastOne.Left a -> Some(a * 100)
+        | AtLeastOne.Right b -> Some(b * -1)
+
+    match map2AtLeastOne m1 m2 f with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(Ok(Some 11), get result 0UL<rowindex> 0UL<colindex>)
+        Assert.Equal(Ok(Some 200), get result 1UL<rowindex> 1UL<colindex>)
+        Assert.Equal(Ok(Some -30), get result 2UL<rowindex> 2UL<colindex>)
+
+[<Fact>]
+let ``matrix map2LeftValues applies where left value present`` () =
+    let m1 =
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 1); (1UL<rowindex>, 1UL<colindex>, 2) ]
+            )
+        )
+
+    let m2 =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 10) ]))
+
+    match map2LeftValues m1 m2 (fun a b -> Some(a + (defaultArg b 0))) with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(Ok(Some 11), get result 0UL<rowindex> 0UL<colindex>)
+        Assert.Equal(Ok(Some 2), get result 1UL<rowindex> 1UL<colindex>)
+        Assert.Equal(2UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix map2i expands uniform leaves on both sides`` () =
+    let m1 =
+        SparseMatrix(
+            4UL<nrows>,
+            4UL<ncols>,
+            4UL<nvals>,
+            Storage(4UL<storageSize>, Matrix.qtree.Node(leaf_v 5, leaf_n (), leaf_n (), leaf_n ()))
+        )
+
+    let m2 =
+        SparseMatrix(
+            4UL<nrows>,
+            4UL<ncols>,
+            4UL<nvals>,
+            Storage(4UL<storageSize>, Matrix.qtree.Node(leaf_v 10, leaf_n (), leaf_n (), leaf_n ()))
+        )
+
+    let f i j a b =
+        match a, b with
+        | Some x, Some y -> Some(x + y + int (uint64 i) * 10 + int (uint64 j))
+        | _ -> None
+
+    match map2i m1 m2 f with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(4UL, uint64 result.nvals)
+        Assert.Equal(Ok(Some 15), get result 0UL<rowindex> 0UL<colindex>)
+        Assert.Equal(Ok(Some 16), get result 0UL<rowindex> 1UL<colindex>)
+        Assert.Equal(Ok(Some 25), get result 1UL<rowindex> 0UL<colindex>)
+        Assert.Equal(Ok(Some 26), get result 1UL<rowindex> 1UL<colindex>)
+
+[<Fact>]
+let ``matrix map2iValues applies indexed where both values present`` () =
+    let m1 =
+        fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, [ (1UL<rowindex>, 1UL<colindex>, 2) ]))
+
+    let m2 =
+        fromCoordinateList (
+            CoordinateList(
+                4UL<nrows>,
+                4UL<ncols>,
+                [ (1UL<rowindex>, 1UL<colindex>, 10); (2UL<rowindex>, 2UL<colindex>, 20) ]
+            )
+        )
+
+    let f i j a b =
+        Some(a + b + int (uint64 i) + int (uint64 j))
+
+    match map2iValues m1 m2 f with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(Ok(Some 14), get result 1UL<rowindex> 1UL<colindex>)
+        Assert.Equal(Ok(None), get result 2UL<rowindex> 2UL<colindex>)
+        Assert.Equal(1UL, uint64 result.nvals)
+
+[<Fact>]
+let ``matrix map2iAtLeastOne passes indices and side`` () =
+    let m1 =
+        fromCoordinateList (CoordinateList(2UL<nrows>, 2UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 1) ]))
+
+    let m2 =
+        fromCoordinateList (
+            CoordinateList(
+                2UL<nrows>,
+                2UL<ncols>,
+                [ (0UL<rowindex>, 0UL<colindex>, 10); (1UL<rowindex>, 1UL<colindex>, 20) ]
+            )
+        )
+
+    let f i j =
+        function
+        | AtLeastOne.Both(a, b) -> Some(a + b + int (uint64 i) + int (uint64 j))
+        | AtLeastOne.Left a -> Some(a)
+        | AtLeastOne.Right b -> Some(b + int (uint64 i) * 100 + int (uint64 j))
+
+    match map2iAtLeastOne m1 m2 f with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(Ok(Some 11), get result 0UL<rowindex> 0UL<colindex>)
+        Assert.Equal(Ok(Some 121), get result 1UL<rowindex> 1UL<colindex>)
+
+[<Fact>]
+let ``matrix map2iLeftValues applies indexed where left present`` () =
+    let m1 =
+        fromCoordinateList (CoordinateList(2UL<nrows>, 2UL<ncols>, [ (1UL<rowindex>, 1UL<colindex>, 2) ]))
+
+    let m2 =
+        fromCoordinateList (CoordinateList(2UL<nrows>, 2UL<ncols>, [ (1UL<rowindex>, 1UL<colindex>, 10) ]))
+
+    let f i j a b =
+        Some(a + (defaultArg b 0) + int (uint64 i) * 10 + int (uint64 j))
+
+    match map2iLeftValues m1 m2 f with
+    | Error e -> failwithf "unexpected error %A" e
+    | Ok result ->
+        Assert.Equal(Ok(Some 23), get result 1UL<rowindex> 1UL<colindex>)
+        Assert.Equal(1UL, uint64 result.nvals)
