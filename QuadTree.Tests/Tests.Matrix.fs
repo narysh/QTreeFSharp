@@ -668,7 +668,8 @@ let ``matrix get missing value`` () =
 [<Fact>]
 let ``matrix get out of bounds`` () =
     let m = fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, []))
-    Assert.Equal(Error Error.InvalidElementIndex, get m 5UL<rowindex> 5UL<colindex>)
+    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
+        get m 5UL<rowindex> 5UL<colindex> |> ignore)
 
 [<Fact>]
 let ``matrix set replaces existing`` () =
@@ -692,7 +693,8 @@ let ``matrix set inserts new`` () =
 [<Fact>]
 let ``matrix set out of bounds`` () =
     let m = fromCoordinateList (CoordinateList(4UL<nrows>, 4UL<ncols>, []))
-    Assert.Equal(Error Error.InvalidElementIndex, set m 5UL<rowindex> 5UL<colindex> 99)
+    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
+        set m 5UL<rowindex> 5UL<colindex> 99 |> ignore)
 
 [<Fact>]
 let ``matrix set then get roundtrip`` () =

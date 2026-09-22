@@ -9,8 +9,10 @@ let private range (count: uint64) =
 let cooGet
     (coo: CoordinateList<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>)
     : Result<option<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows || uint64 colindex >= uint64 coo.ncols then
-        Error Error.InvalidElementIndex
+    if uint64 rowindex >= uint64 coo.nrows then
+        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
+    elif uint64 colindex >= uint64 coo.ncols then
+        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
     else
         match coo.list |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
         | Some(_, _, value) -> Ok(Some value)
@@ -19,8 +21,10 @@ let cooGet
 let cooUpdate
     (coo: CoordinateList<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
     : Result<CoordinateList<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows || uint64 colindex >= uint64 coo.ncols then
-        Error Error.InvalidElementIndex
+    if uint64 rowindex >= uint64 coo.nrows then
+        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
+    elif uint64 colindex >= uint64 coo.ncols then
+        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
     else
         let mutable acc = []
         let mutable rest = coo.list
@@ -49,46 +53,6 @@ let cooUpdate
             rest <- rest.Tail
 
         Ok(CoordinateList(coo.nrows, coo.ncols, List.rev acc))
-
-
-let private applyBinary
-    (op: BinaryOp<'a, 'b, 'c>)
-    (i: uint64<rowindex>)
-    (j: uint64<colindex>)
-    (v1: Option<'a>)
-    (v2: Option<'b>)
-    : Option<'c> =
-    match op with
-    | BinaryOp.ValuesOnly f ->
-        match v1, v2 with
-        | Some a, Some b -> f a b
-        | _ -> None
-    | BinaryOp.ValuesOnlyIndexed f ->
-        match v1, v2 with
-        | Some a, Some b -> f i j a b
-        | _ -> None
-    | BinaryOp.AllCells f -> f v1 v2
-    | BinaryOp.AllCellsIndexed f -> f i j v1 v2
-    | BinaryOp.AtLeastOneValue f ->
-        match v1, v2 with
-        | Some a, Some b -> f (AtLeastOne.Both(a, b))
-        | Some a, None -> f (AtLeastOne.Left a)
-        | None, Some b -> f (AtLeastOne.Right b)
-        | None, None -> None
-    | BinaryOp.AtLeastOneValueIndexed f ->
-        match v1, v2 with
-        | Some a, Some b -> f i j (AtLeastOne.Both(a, b))
-        | Some a, None -> f i j (AtLeastOne.Left a)
-        | None, Some b -> f i j (AtLeastOne.Right b)
-        | None, None -> None
-    | BinaryOp.LeftValuesOnly f ->
-        match v1 with
-        | Some a -> f a v2
-        | None -> None
-    | BinaryOp.LeftValuesOnlyIndexed f ->
-        match v1 with
-        | Some a -> f i j a v2
-        | None -> None
 
 let private cooMapInner (coo: CoordinateList<'a>) (op: UnaryOp<'a, 'b>) : CoordinateList<'b> =
     let result =

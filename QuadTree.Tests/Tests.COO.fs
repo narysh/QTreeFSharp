@@ -50,9 +50,8 @@ let ``cooGet out of bounds`` () =
     let coo =
         CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 1) ])
 
-    let actual = cooGet (coo, 5UL<rowindex>, 5UL<colindex>)
-
-    Assert.Equal(Error Error.InvalidElementIndex, actual)
+    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
+        cooGet (coo, 5UL<rowindex>, 5UL<colindex>) |> ignore)
 
 // === cooUpdate tests ===
 
@@ -111,9 +110,8 @@ let ``cooUpdate out of bounds`` () =
     let coo =
         CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 1) ])
 
-    let actual = cooUpdate (coo, 5UL<rowindex>, 5UL<colindex>, 99)
-
-    Assert.Equal(Error Error.InvalidElementIndex, actual)
+    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
+        cooUpdate (coo, 5UL<rowindex>, 5UL<colindex>, 99) |> ignore)
 
 // === cooMap tests ===
 

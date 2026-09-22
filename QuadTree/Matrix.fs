@@ -41,7 +41,6 @@ type SparseMatrix<'value> =
 type Error =
     | InconsistentStructureOfStorages
     | InconsistentSizeOfArguments
-    | InvalidElementIndex
 
 
 let mkNode x1 x2 x3 x4 =
@@ -141,8 +140,10 @@ let empty nrows ncols =
     fromCoordinateList (CoordinateList(nrows, ncols, []))
 
 let get (matrix: SparseMatrix<'a>) (row: uint64<rowindex>) (col: uint64<colindex>) : Result<option<'a>, Error> =
-    if uint64 row >= uint64 matrix.nrows || uint64 col >= uint64 matrix.ncols then
-        Error Error.InvalidElementIndex
+    if uint64 row >= uint64 matrix.nrows then
+        raise (System.ArgumentOutOfRangeException("row", "Row index is outside the matrix bounds."))
+    elif uint64 col >= uint64 matrix.ncols then
+        raise (System.ArgumentOutOfRangeException("col", "Column index is outside the matrix bounds."))
     else
         let rec inner tree (pr: uint64<rowindex>) (pc: uint64<colindex>) (size: uint64) =
             match tree with
@@ -171,8 +172,10 @@ let set
     (col: uint64<colindex>)
     (value: 'a)
     : Result<SparseMatrix<'a>, Error> =
-    if uint64 row >= uint64 matrix.nrows || uint64 col >= uint64 matrix.ncols then
-        Error Error.InvalidElementIndex
+    if uint64 row >= uint64 matrix.nrows then
+        raise (System.ArgumentOutOfRangeException("row", "Row index is outside the matrix bounds."))
+    elif uint64 col >= uint64 matrix.ncols then
+        raise (System.ArgumentOutOfRangeException("col", "Column index is outside the matrix bounds."))
     else
         let rec inner tree (pr: uint64<rowindex>) (pc: uint64<colindex>) (size: uint64) =
             let halfSize = size / 2UL
@@ -339,7 +342,7 @@ type BinaryOp<'a, 'b, 'c> =
     | LeftValuesOnly of ('a -> Option<'b> -> Option<'c>)
     | LeftValuesOnlyIndexed of (uint64<rowindex> -> uint64<colindex> -> 'a -> Option<'b> -> Option<'c>)
 
-let private applyBinary
+let applyBinary
     (op: BinaryOp<'a, 'b, 'c>)
     (prow: uint64<rowindex>)
     (pcol: uint64<colindex>)
