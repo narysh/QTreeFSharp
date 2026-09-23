@@ -70,9 +70,9 @@ let ``toCoordinateList (fromCoordinateList coo) preserves every value`` (inp: In
 
     back.nrows = coo.nrows
     && back.ncols = coo.ncols
-    && List.length back.list = List.length coo.list
+    && Array.length back.list = Array.length coo.list
     && coo.list
-       |> List.forall (fun (r, c, v) -> cooGet (back, r, c) = Ok(Some v))
+       |> Array.forall (fun (r, c, v) -> cooGet (back, r, c) = Ok(Some v))
 
 [<Property(Arbitrary = [| typeof<InputArbs> |])>]
 let ``cooUpdate writes a value and adjusts the length`` (inp: Input) =
@@ -83,12 +83,12 @@ let ``cooUpdate writes a value and adjusts the length`` (inp: Input) =
     let c = abs inp.Cols % ncols
     let ri = uint64 r * 1UL<rowindex>
     let ci = uint64 c * 1UL<colindex>
-    let wasPresent = coo.list |> List.exists (fun (i, j, _) -> i = ri && j = ci)
+    let wasPresent = coo.list |> Array.exists (fun (i, j, _) -> i = ri && j = ci)
 
     match cooUpdate (coo, ri, ci, 777) with
     | Ok updated ->
         cooGet (updated, ri, ci) = Ok(Some 777)
-        && List.length updated.list = List.length coo.list + (if wasPresent then 0 else 1)
+        && Array.length updated.list = Array.length coo.list + (if wasPresent then 0 else 1)
     | Error _ -> false
 
 [<Property(Arbitrary = [| typeof<InputArbs> |])>]
@@ -112,9 +112,9 @@ let ``cooMapValues maps every stored value once`` (inp: Input) =
     let coo = toCoo inp
     let mapped = cooMapValues coo (fun v -> Some(v + 1))
 
-    List.length mapped.list = List.length coo.list
+    Array.length mapped.list = Array.length coo.list
     && coo.list
-       |> List.forall (fun (r, c, v) -> cooGet (mapped, r, c) = Ok(Some(v + 1)))
+       |> Array.forall (fun (r, c, v) -> cooGet (mapped, r, c) = Ok(Some(v + 1)))
 
 [<Property(Arbitrary = [| typeof<InputArbs> |])>]
 let ``out-of-bounds access raises ArgumentOutOfRangeException`` (inp: Input) =

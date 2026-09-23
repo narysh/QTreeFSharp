@@ -6,6 +6,16 @@ open Matrix
 let private range (count: uint64) =
     if count = 0UL then [] else [ 0UL .. count - 1UL ]
 
+let private compareEntriesByRowCol (e1: COOEntry<'v>) (e2: COOEntry<'v>) =
+    let (i1, j1, _) = e1
+    let (i2, j2, _) = e2
+    let c = compare i1 i2
+    if c <> 0 then c else compare j1 j2
+
+let private entryComparer<'v> =
+    { new System.Collections.Generic.IComparer<COOEntry<'v>> with
+        member _.Compare(e1, e2) = compareEntriesByRowCol e1 e2 }
+
 let cooGet
     (coo: CoordinateList<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>)
     : Result<option<'a>, Error> =
@@ -14,9 +24,14 @@ let cooGet
     elif uint64 colindex >= uint64 coo.ncols then
         raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
     else
-        match coo.list |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
-        | Some(_, _, value) -> Ok(Some value)
-        | None -> Ok None
+        let idx =
+            System.Array.BinarySearch(coo.list, (rowindex, colindex, Unchecked.defaultof<'a>), entryComparer<'a>)
+
+        if idx >= 0 then
+            let (_, _, value) = coo.list.[idx]
+            Ok(Some value)
+        else
+            Ok None
 
 let cooUpdate
     (coo: CoordinateList<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
@@ -26,50 +41,41 @@ let cooUpdate
     elif uint64 colindex >= uint64 coo.ncols then
         raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
     else
-        let mutable acc = []
-        let mutable rest = coo.list
-        let mutable inserted = false
+        let idx =
+            System.Array.BinarySearch(coo.list, (rowindex, colindex, value), entryComparer<'a>)
 
-        while rest <> [] && not inserted do
-            let (i, j, v) = rest.Head
+        if idx >= 0 then
+            let arr = Array.copy coo.list
+            arr.[idx] <- (rowindex, colindex, value)
+            Ok(Matrix.createCOO coo.nrows coo.ncols arr)
+        else
+            let insertAt = ~~~idx
+            let arr = Array.zeroCreate (coo.list.Length + 1)
 
-            if i = rowindex && j = colindex then
-                acc <- (rowindex, colindex, value) :: acc
-                rest <- rest.Tail
-                inserted <- true
-            elif rowindex < i || (rowindex = i && colindex < j) then
-                acc <- (rowindex, colindex, value) :: acc
-                inserted <- true
-            else
-                acc <- (i, j, v) :: acc
-                rest <- rest.Tail
+            Array.blit coo.list 0 arr 0 insertAt
+            arr.[insertAt] <- (rowindex, colindex, value)
+            Array.blit coo.list insertAt arr (insertAt + 1) (coo.list.Length - insertAt)
 
-        if not inserted then
-            acc <- (rowindex, colindex, value) :: acc
-
-        while rest <> [] do
-            let entry = rest.Head
-            acc <- entry :: acc
-            rest <- rest.Tail
-
-        Ok(CoordinateList(coo.nrows, coo.ncols, List.rev acc))
+            Ok(Matrix.createCOO coo.nrows coo.ncols arr)
 
 let private cooMapInner (coo: CoordinateList<'a>) (op: UnaryOp<'a, 'b>) : CoordinateList<'b> =
+    let entries = Array.toList coo.list
+
     let result =
         match op with
         | UnaryOp.ValuesOnly f ->
-            coo.list
+            entries
             |> List.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
         | UnaryOp.ValuesOnlyIndexed f ->
-            coo.list
+            entries
             |> List.choose (fun (i, j, v) -> f i j v |> Option.map (fun r -> (i, j, r)))
         | UnaryOp.AllCells f ->
             match f None with
             | None ->
-                coo.list
+                entries
                 |> List.choose (fun (i, j, v) -> f (Some v) |> Option.map (fun r -> (i, j, r)))
             | Some fnone ->
-                let lookup = coo.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+                let lookup = entries |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
 
                 [ for i in range (uint64 coo.nrows) do
                       let ri = i * 1UL<rowindex>
@@ -86,7 +92,7 @@ let private cooMapInner (coo: CoordinateList<'a>) (op: UnaryOp<'a, 'b>) : Coordi
                           | Some value -> yield (ri, cj, value)
                           | None -> () ]
         | UnaryOp.AllCellsIndexed f ->
-            let mutable rest = coo.list
+            let mutable rest = entries
 
             [ for i in range (uint64 coo.nrows) do
                   let ri = i * 1UL<rowindex>
@@ -105,7 +111,7 @@ let private cooMapInner (coo: CoordinateList<'a>) (op: UnaryOp<'a, 'b>) : Coordi
                       | Some value -> yield (ri, cj, value)
                       | None -> () ]
 
-    CoordinateList(coo.nrows, coo.ncols, result)
+    Matrix.createCOO coo.nrows coo.ncols (Array.ofList result)
 
 let private mergeBinary (l1: COOEntry<'a> list) (l2: COOEntry<'b> list) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c> list =
     let mutable acc = []
@@ -150,16 +156,18 @@ let private cooMap2Inner
     else
         let nrows = coo1.nrows
         let ncols = coo1.ncols
+        let entries1 = Array.toList coo1.list
+        let entries2 = Array.toList coo2.list
 
         let result =
             match op with
             | BinaryOp.AllCells f ->
                 match f None None with
-                | None -> mergeBinary coo1.list coo2.list op
+                | None -> mergeBinary entries1 entries2 op
                 | Some _ ->
-                    let lookup1 = coo1.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+                    let lookup1 = entries1 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
 
-                    let lookup2 = coo2.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+                    let lookup2 = entries2 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
 
                     [ for i in range (uint64 nrows) do
                           let ri = i * 1UL<rowindex>
@@ -171,8 +179,8 @@ let private cooMap2Inner
                               | Some value -> yield (ri, cj, value)
                               | None -> () ]
             | BinaryOp.AllCellsIndexed f ->
-                let mutable rest1 = coo1.list
-                let mutable rest2 = coo2.list
+                let mutable rest1 = entries1
+                let mutable rest2 = entries2
 
                 [ for i in range (uint64 nrows) do
                       let ri = i * 1UL<rowindex>
@@ -197,9 +205,9 @@ let private cooMap2Inner
                           match f ri cj v1 v2 with
                           | Some value -> yield (ri, cj, value)
                           | None -> () ]
-            | _ -> mergeBinary coo1.list coo2.list op
+            | _ -> mergeBinary entries1 entries2 op
 
-        CoordinateList(nrows, ncols, result) |> Ok
+        Matrix.createCOO nrows ncols (Array.ofList result) |> Ok
 
 let cooMap (coo: CoordinateList<'a>) f = cooMapInner coo (UnaryOp.AllCells f)
 
@@ -250,8 +258,11 @@ let mxmcoo
     if uint64 m1.ncols <> uint64 m2.nrows then
         Error Error.InconsistentSizeOfArguments
     else
-        let firstA = m1.list |> List.tryHead |> Option.map (fun (_, _, v) -> v)
-        let firstB = m2.list |> List.tryHead |> Option.map (fun (_, _, v) -> v)
+        let entries1 = Array.toList m1.list
+        let entries2 = Array.toList m2.list
+
+        let firstA = entries1 |> List.tryHead |> Option.map (fun (_, _, v) -> v)
+        let firstB = entries2 |> List.tryHead |> Option.map (fun (_, _, v) -> v)
 
         let canOptimize =
             let noneNone = op_mult None None = None
@@ -279,8 +290,8 @@ let mxmcoo
             noneNone && multSomeNone && multNoneSome && addNoneSome && addSomeNone
 
         if canOptimize then
-            let m1ByRow = m1.list |> List.groupBy (fun (i, _, _) -> i) |> Map.ofList
-            let m2ByRow = m2.list |> List.groupBy (fun (k, _, _) -> k) |> Map.ofList
+            let m1ByRow = entries1 |> List.groupBy (fun (i, _, _) -> i) |> Map.ofList
+            let m2ByRow = entries2 |> List.groupBy (fun (k, _, _) -> k) |> Map.ofList
 
             let result =
                 [ for KeyValue(i, m1Entries) in m1ByRow do
@@ -304,10 +315,10 @@ let mxmcoo
                 |> List.choose (fun (i, j, v) -> v |> Option.map (fun v -> (i, j, v)))
                 |> List.sortBy (fun (i, j, _) -> (i, j))
 
-            CoordinateList(m1.nrows, m2.ncols, grouped) |> Ok
+            Matrix.createCOO m1.nrows m2.ncols (Array.ofList grouped) |> Ok
         else
-            let m1Map = m1.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
-            let m2Map = m2.list |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+            let m1Map = entries1 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
+            let m2Map = entries2 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
             let kCount = uint64 m1.ncols
 
             let result =
@@ -329,4 +340,4 @@ let mxmcoo
                           | Some value -> yield (ri, cj, value)
                           | None -> () ]
 
-            CoordinateList(m1.nrows, m2.ncols, result) |> Ok
+            Matrix.createCOO m1.nrows m2.ncols (Array.ofList result) |> Ok

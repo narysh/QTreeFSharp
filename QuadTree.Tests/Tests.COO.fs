@@ -196,7 +196,7 @@ let ``cooMap fills missing cells (general form)`` () =
     Assert.Equal(9, actual.list.Length)
 
     Assert.Equal(
-        List.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
+        Array.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
         Some(2UL<rowindex>, 2UL<colindex>, 5)
     )
 
@@ -407,7 +407,7 @@ let ``cooMapi fills missing cells (general form)`` () =
     Assert.Equal(9, actual.list.Length)
 
     Assert.Equal(
-        List.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
+        Array.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
         Some(2UL<rowindex>, 2UL<colindex>, 5)
     )
 
@@ -432,7 +432,7 @@ let ``cooMapi position-dependent fill of missing cells`` () =
           (1UL<rowindex>, 0UL<colindex>, 1)
           (1UL<rowindex>, 1UL<colindex>, 2) ]
 
-    Assert.Equal<list<uint64<rowindex> * uint64<colindex> * int>>(expected, actual.list)
+    Assert.Equal<COOEntry<int>[]>(Array.ofList expected, actual.list)
 
 [<Fact>]
 let ``cooMapi zero-size matrix`` () =
@@ -562,7 +562,7 @@ let ``Sparse mxmcoo`` () =
     | Ok actual ->
         Assert.Equal(expected.nrows, actual.nrows)
         Assert.Equal(expected.ncols, actual.ncols)
-        Assert.Equal<List<_>>(expected.list, actual.list)
+        Assert.Equal<COOEntry<_>[]>(expected.list, actual.list)
     | Error e -> failwith (e.ToString())
 
 [<Fact>]
@@ -595,7 +595,7 @@ let ``Shrinking mxmcoo`` () =
     | Ok actual ->
         Assert.Equal(expected.nrows, actual.nrows)
         Assert.Equal(expected.ncols, actual.ncols)
-        Assert.Equal<List<_>>(expected.list, actual.list)
+        Assert.Equal<COOEntry<_>[]>(expected.list, actual.list)
     | Error e -> failwith (e.ToString())
 
 
@@ -630,7 +630,7 @@ let ``mxmcoo with non-absorbing op_mult`` () =
         Assert.Equal(1UL<nrows>, actual.nrows)
         Assert.Equal(1UL<ncols>, actual.ncols)
         Assert.Equal(1, actual.list.Length)
-        Assert.Equal(Some 5, actual.list |> List.tryHead |> Option.map (fun (_, _, v) -> v))
+        Assert.Equal(Some 5, actual.list |> Array.tryHead |> Option.map (fun (_, _, v) -> v))
     | Error e -> failwith (e.ToString())
 
 // === cooMapValues / cooMapiValues tests ===
@@ -645,7 +645,7 @@ let ``cooMapValues applies only to stored values`` () =
     Assert.Equal(2, actual.list.Length)
 
     Assert.Equal(
-        List.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
+        Array.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
         Some(0UL<rowindex>, 0UL<colindex>, 10)
     )
 
@@ -660,7 +660,7 @@ let ``cooMapiValues applies indexed only to stored values`` () =
     Assert.Equal(1, actual.list.Length)
 
     Assert.Equal(
-        List.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 2UL<colindex>) actual.list,
+        Array.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 2UL<colindex>) actual.list,
         Some(1UL<rowindex>, 2UL<colindex>, 8)
     )
 
@@ -679,7 +679,7 @@ let ``cooMap2Values applies only where both present`` () =
         Assert.Equal(1, actual.list.Length)
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
             Some(0UL<rowindex>, 0UL<colindex>, 11)
         )
     | Error e -> failwithf "unexpected error %A" e
@@ -722,17 +722,17 @@ let ``cooMap2AtLeastOne distinguishes both left right`` () =
         Assert.Equal(3, actual.list.Length)
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
             Some(0UL<rowindex>, 0UL<colindex>, 11)
         )
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
             Some(1UL<rowindex>, 1UL<colindex>, 200)
         )
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
             Some(2UL<rowindex>, 2UL<colindex>, -30)
         )
     | Error e -> failwithf "unexpected error %A" e
@@ -750,12 +750,12 @@ let ``cooMap2LeftValues applies where left present`` () =
         Assert.Equal(2, actual.list.Length)
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
             Some(0UL<rowindex>, 0UL<colindex>, 11)
         )
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
             Some(1UL<rowindex>, 1UL<colindex>, 2)
         )
     | Error e -> failwithf "unexpected error %A" e
@@ -790,7 +790,7 @@ let ``cooMap2iValues applies indexed where both present`` () =
         Assert.Equal(1, actual.list.Length)
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
             Some(1UL<rowindex>, 1UL<colindex>, 14)
         )
     | Error e -> failwithf "unexpected error %A" e
@@ -833,12 +833,12 @@ let ``cooMap2iAtLeastOne passes indices and side`` () =
         Assert.Equal(2, actual.list.Length)
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 0UL<rowindex> && j = 0UL<colindex>) actual.list,
             Some(0UL<rowindex>, 0UL<colindex>, 11)
         )
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
             Some(1UL<rowindex>, 1UL<colindex>, 121)
         )
     | Error e -> failwithf "unexpected error %A" e
@@ -859,7 +859,7 @@ let ``cooMap2iLeftValues applies indexed where left present`` () =
         Assert.Equal(1, actual.list.Length)
 
         Assert.Equal(
-            List.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
+            Array.tryFind (fun (i, j, _) -> i = 1UL<rowindex> && j = 1UL<colindex>) actual.list,
             Some(1UL<rowindex>, 1UL<colindex>, 23)
         )
     | Error e -> failwithf "unexpected error %A" e
