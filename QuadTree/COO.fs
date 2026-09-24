@@ -63,9 +63,7 @@ let private cooMapInner (coo: CoordinateList<'a>) (op: UnaryOp<'a, 'b>) : Coordi
 
     let result =
         match op with
-        | UnaryOp.ValuesOnly f ->
-            entries
-            |> List.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
+        | UnaryOp.ValuesOnly f -> entries |> List.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
         | UnaryOp.ValuesOnlyIndexed f ->
             entries
             |> List.choose (fun (i, j, v) -> f i j v |> Option.map (fun r -> (i, j, r)))

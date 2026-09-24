@@ -50,8 +50,7 @@ let ``cooGet out of bounds`` () =
     let coo =
         CoordinateList(4UL<nrows>, 4UL<ncols>, [ (0UL<rowindex>, 0UL<colindex>, 1) ])
 
-    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
-        cooGet (coo, 5UL<rowindex>, 5UL<colindex>) |> ignore)
+    Assert.Throws<System.ArgumentOutOfRangeException>(fun () -> cooGet (coo, 5UL<rowindex>, 5UL<colindex>) |> ignore)
 
 // === cooUpdate tests ===
 

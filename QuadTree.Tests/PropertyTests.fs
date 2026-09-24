@@ -27,21 +27,26 @@ let private toCoo (inp: Input) : CoordinateList<int> =
 
     CoordinateList(uint64 nrows * 1UL<nrows>, uint64 ncols * 1UL<ncols>, entries)
 
-let private arbInput : Arbitrary<Input> =
+let private arbInput: Arbitrary<Input> =
     let gen =
         gen {
             let! rows = Gen.choose (1, 16)
             let! cols = Gen.choose (1, 16)
 
             let! cells =
-                Gen.listOf (gen {
-                    let! r = Gen.choose (-5, 20)
-                    let! c = Gen.choose (-5, 20)
-                    let! v = Gen.choose (-100, 100)
-                    return (r, c, v)
-                })
+                Gen.listOf (
+                    gen {
+                        let! r = Gen.choose (-5, 20)
+                        let! c = Gen.choose (-5, 20)
+                        let! v = Gen.choose (-100, 100)
+                        return (r, c, v)
+                    }
+                )
 
-            return { Rows = rows; Cols = cols; Cells = cells }
+            return
+                { Rows = rows
+                  Cols = cols
+                  Cells = cells }
         }
 
     Arb.fromGen gen
@@ -71,8 +76,7 @@ let ``toCoordinateList (fromCoordinateList coo) preserves every value`` (inp: In
     back.nrows = coo.nrows
     && back.ncols = coo.ncols
     && Array.length back.list = Array.length coo.list
-    && coo.list
-       |> Array.forall (fun (r, c, v) -> cooGet (back, r, c) = Ok(Some v))
+    && coo.list |> Array.forall (fun (r, c, v) -> cooGet (back, r, c) = Ok(Some v))
 
 [<Property(Arbitrary = [| typeof<InputArbs> |])>]
 let ``cooUpdate writes a value and adjusts the length`` (inp: Input) =
@@ -103,8 +107,7 @@ let ``set and cooUpdate agree on the written cell`` (inp: Input) =
     let ci = uint64 c * 1UL<colindex>
 
     match cooUpdate (coo, ri, ci, 42), Matrix.set qt ri ci 42 with
-    | Ok updatedCoo, Ok updatedQt ->
-        cooGet (updatedCoo, ri, ci) = Matrix.get updatedQt ri ci
+    | Ok updatedCoo, Ok updatedQt -> cooGet (updatedCoo, ri, ci) = Matrix.get updatedQt ri ci
     | _ -> false
 
 [<Property(Arbitrary = [| typeof<InputArbs> |])>]

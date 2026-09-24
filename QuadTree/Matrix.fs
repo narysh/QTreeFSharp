@@ -97,10 +97,16 @@ type CoordinateList<'value> =
     // Fast factory: does NOT re-sort, expects an already sorted array.
     // Used by COO operations whose results are built in (row, col) order and
     // by cooUpdate, which maintains the sorted invariant itself.
-    static member Create(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[]) : CoordinateList<'value> =
+    static member Create
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[])
+        : CoordinateList<'value> =
         CoordinateList<'value>(nrows, ncols, entries, true)
 
-let internal createCOO (nrows: uint64<nrows>) (ncols: uint64<ncols>) (entries: COOEntry<'value>[]) : CoordinateList<'value> =
+let internal createCOO
+    (nrows: uint64<nrows>)
+    (ncols: uint64<ncols>)
+    (entries: COOEntry<'value>[])
+    : CoordinateList<'value> =
     CoordinateList<'value>.Create(nrows, ncols, entries)
 
 let fromCoordinateList (coo: CoordinateList<'a>) =
@@ -137,7 +143,8 @@ let fromCoordinateList (coo: CoordinateList<'a>) =
                 (traverse swCoo swp halfSize)
                 (traverse seCoo sep halfSize)
 
-    let tree = traverse (Array.toList coo.list) (0UL<rowindex>, 0UL<colindex>) storageSize
+    let tree =
+        traverse (Array.toList coo.list) (0UL<rowindex>, 0UL<colindex>) storageSize
 
     SparseMatrix(nrows, ncols, nvals, Storage(storageSize * 1UL<storageSize>, tree))
 
