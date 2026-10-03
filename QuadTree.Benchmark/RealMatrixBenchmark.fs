@@ -90,137 +90,81 @@ type RealMatrixBenchmark() =
     [<Benchmark(Baseline = true, Description = "Real_COO_map")>]
     member this.CooMap() =
         if not skip then
-            resultCoo <- cooMap cooMatrix (fun v -> v |> Option.map (fun x -> x * 2.0))
+            resultCoo <- cooMap cooMatrix doubleMap
 
     [<Benchmark(Description = "Real_QT_map")>]
     member this.QtMap() =
         if not skip then
-            resultQt <- map qtMatrix (fun v -> v |> Option.map (fun x -> x * 2.0))
+            resultQt <- map qtMatrix doubleMap
 
     [<Benchmark(Description = "Real_COO_mapi")>]
     member this.CooMapi() =
         if not skip then
-            resultCoo <-
-                cooMapi cooMatrix (fun i j v -> v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j)))
+            resultCoo <- cooMapi cooMatrix doubleMapi
 
     [<Benchmark(Description = "Real_QT_mapi")>]
     member this.QtMapi() =
         if not skip then
-            resultQt <- mapi qtMatrix (fun i j v -> v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j)))
+            resultQt <- mapi qtMatrix doubleMapi
 
     [<Benchmark(Description = "Real_COOLIST_map")>]
     member this.CooListMap() =
         if not skip then
-            resultList <- COOList.cooMap listMatrix (fun v -> v |> Option.map (fun x -> x * 2.0))
+            resultList <- COOList.cooMap listMatrix doubleMap
 
     [<Benchmark(Description = "Real_COOLIST_mapi")>]
     member this.CooListMapi() =
         if not skip then
-            resultList <-
-                COOList.cooMapi listMatrix (fun i j v ->
-                    v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j)))
+            resultList <- COOList.cooMapi listMatrix doubleMapi
 
     [<Benchmark(Description = "Real_COOLIST_mxm")>]
     member this.CooListMxm() =
         if not skip && doMxm then
-            match COOList.mxmcoo op_add op_mult listMatrix listMatrix with
-            | Ok result -> resultList <- result
-            | Error _ -> failwith "COOList mxmcoo failed"
+            assignOrFail "COOList mxmcoo failed" (COOList.mxmcoo op_add op_mult listMatrix listMatrix) (fun r ->
+                resultList <- r)
 
     [<Benchmark(Description = "Real_COOLIST_get")>]
     member this.CooListGet() =
         if not skip then
-            let mutable acc = 0.0
-
-            for k = 0 to lookupCoords.Length - 1 do
-                let (i, j) = lookupCoords.[k]
-
-                match COOList.cooGet (listMatrix, i, j) with
-                | Ok(Some v) -> acc <- acc + v
-                | _ -> ()
-
-            resultListVal <- acc
+            resultListVal <-
+                sumLookups lookupCoords.Length lookupCoords (fun (i, j) -> COOList.cooGet (listMatrix, i, j))
 
     [<Benchmark(Description = "Real_COOLIST_set")>]
     member this.CooListSet() =
         if not skip then
-            let mutable m = listMatrix
-
-            for k = 0 to lookupCoords.Length - 1 do
-                let (i, j) = lookupCoords.[k]
-
-                match COOList.cooUpdate (m, i, j, lookupValues.[k] * 2.0) with
-                | Ok updated -> m <- updated
-                | _ -> ()
-
-            resultList <- m
+            resultList <-
+                updateLookups lookupCoords.Length lookupCoords lookupValues listMatrix (fun m i j v ->
+                    COOList.cooUpdate (m, i, j, v))
 
     [<Benchmark(Description = "Real_COO_get")>]
     member this.CooGet() =
         if not skip then
-            let mutable acc = 0.0
-
-            for k = 0 to lookupCoords.Length - 1 do
-                let (i, j) = lookupCoords.[k]
-
-                match cooGet (cooMatrix, i, j) with
-                | Ok(Some v) -> acc <- acc + v
-                | _ -> ()
-
-            resultCooVal <- acc
+            resultCooVal <- sumLookups lookupCoords.Length lookupCoords (fun (i, j) -> cooGet (cooMatrix, i, j))
 
     [<Benchmark(Description = "Real_QT_get")>]
     member this.QtGet() =
         if not skip then
-            let mutable acc = 0.0
-
-            for k = 0 to lookupCoords.Length - 1 do
-                let (i, j) = lookupCoords.[k]
-
-                match get qtMatrix i j with
-                | Ok(Some v) -> acc <- acc + v
-                | _ -> ()
-
-            resultQtVal <- acc
+            resultQtVal <- sumLookups lookupCoords.Length lookupCoords (fun (i, j) -> get qtMatrix i j)
 
     [<Benchmark(Description = "Real_COO_set")>]
     member this.CooSet() =
         if not skip then
-            let mutable m = cooMatrix
-
-            for k = 0 to lookupCoords.Length - 1 do
-                let (i, j) = lookupCoords.[k]
-
-                match cooUpdate (m, i, j, lookupValues.[k] * 2.0) with
-                | Ok updated -> m <- updated
-                | _ -> ()
-
-            resultCoo <- m
+            resultCoo <-
+                updateLookups lookupCoords.Length lookupCoords lookupValues cooMatrix (fun m i j v ->
+                    cooUpdate (m, i, j, v))
 
     [<Benchmark(Description = "Real_QT_set")>]
     member this.QtSet() =
         if not skip then
-            let mutable m = qtMatrix
-
-            for k = 0 to lookupCoords.Length - 1 do
-                let (i, j) = lookupCoords.[k]
-
-                match set m i j (lookupValues.[k] * 2.0) with
-                | Ok updated -> m <- updated
-                | _ -> ()
-
-            resultQt <- m
+            resultQt <-
+                updateLookups lookupCoords.Length lookupCoords lookupValues qtMatrix (fun m i j v -> set m i j v)
 
     [<Benchmark(Description = "Real_COO_mxm")>]
     member this.CooMxm() =
         if not skip && doMxm then
-            match mxmcoo op_add op_mult cooMatrix cooMatrix with
-            | Ok result -> resultCoo <- result
-            | Error _ -> failwith "mxmcoo failed"
+            assignOrFail "mxmcoo failed" (mxmcoo op_add op_mult cooMatrix cooMatrix) (fun r -> resultCoo <- r)
 
     [<Benchmark(Description = "Real_QT_mxm")>]
     member this.QtMxm() =
         if not skip && doMxm then
-            match LinearAlgebra.mxm op_add op_mult qtMatrix qtMatrix with
-            | Ok result -> resultQt <- result
-            | Error _ -> failwith "mxm failed"
+            assignOrFail "mxm failed" (LinearAlgebra.mxm op_add op_mult qtMatrix qtMatrix) (fun r -> resultQt <- r)

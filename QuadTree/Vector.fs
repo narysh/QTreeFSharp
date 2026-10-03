@@ -1,4 +1,4 @@
-module Vector
+﻿module Vector
 
 open Common
 
@@ -576,43 +576,6 @@ let scatter
             (Ok w)
     | Error x -> Error Error.InconsistentStructureOfStorages
 
-let filter (vector: SparseVector<'a>) (predicate: 'a -> bool) : SparseVector<'a> =
-    let rec inner (size: uint64<storageSize>) vector =
-        match vector with
-        | Node(x1, x2) ->
-            let t1, nvals1 = inner (size / 2UL) x1
-            let t2, nvals2 = inner (size / 2UL) x2
-            (mkNode t1 t2), nvals1 + nvals2
-        | Leaf(Dummy) -> Leaf(Dummy), 0UL<nvals>
-        | Leaf(UserValue(None)) -> Leaf(UserValue(None)), 0UL<nvals>
-        | Leaf(UserValue(Some(v))) ->
-            if predicate v then
-                Leaf(UserValue(Some(v))), (uint64 size) * 1UL<nvals>
-            else
-                Leaf(UserValue(None)), 0UL<nvals>
-
-    let storage, nvals = inner vector.storage.size vector.storage.data
-    SparseVector(vector.length, nvals, Storage(vector.storage.size, storage))
-
-let exists (vector: SparseVector<'a>) (predicate: 'a -> bool) : bool =
-    let rec inner vector =
-        match vector with
-        | Leaf(Dummy) -> false
-        | Leaf(UserValue(None)) -> false
-        | Leaf(UserValue(Some(v))) -> predicate v
-        | Node(x1, x2) -> inner x1 || inner x2
-
-    inner vector.storage.data
-
-let forall (vector: SparseVector<'a>) (predicate: 'a -> bool) : bool =
-    let rec inner vector =
-        match vector with
-        | Leaf(Dummy) -> true
-        | Leaf(UserValue(None)) -> true
-        | Leaf(UserValue(Some(v))) -> predicate v
-        | Node(x1, x2) -> inner x1 && inner x2
-
-    inner vector.storage.data
 
 let slice (_start: int) (_end: int) (vector: SparseVector<'a>) : Result<SparseVector<'a>, string> =
     if _start < 0 then

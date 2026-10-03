@@ -1,4 +1,4 @@
-﻿module COOArray.Tests
+module COOArray.Tests
 
 open System
 open Xunit
@@ -173,7 +173,7 @@ let ``cooMap filters None results`` () =
     Assert.Equal(expected, actual)
 
 [<Fact>]
-let ``cooMap fills missing cells (general form)`` () =
+let ``cooMap and cooMapi fill missing cells (general form)`` () =
     let nrows = 3UL<nrows>
     let ncols = 3UL<ncols>
 
@@ -183,24 +183,24 @@ let ``cooMap fills missing cells (general form)`` () =
 
     let f v = Some(defaultArg v 0)
 
-    let actual = cooMap coo f
+    for actual in [ cooMap coo f; cooMapi coo (fun _ _ v -> f v) ] do
+        Assert.Equal(nrows, actual.nrows)
+        Assert.Equal(ncols, actual.ncols)
+        Assert.Equal(9, actual.list.Length)
 
-    Assert.Equal(nrows, actual.nrows)
-    Assert.Equal(ncols, actual.ncols)
-    Assert.Equal(9, actual.list.Length)
-
-    Assert.Equal(
-        Array.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
-        Some(2UL<rowindex>, 2UL<colindex>, 5)
-    )
+        Assert.Equal(
+            Array.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
+            Some(2UL<rowindex>, 2UL<colindex>, 5)
+        )
 
 [<Fact>]
-let ``cooMap zero-size matrix`` () =
+let ``cooMap and cooMapi on zero-size matrix`` () =
     let coo = ArrayCOO(0UL<nrows>, 0UL<ncols>, [])
     let f v = v |> Option.map (fun v -> v * 2)
-    let actual = cooMap coo f
     let expected = ArrayCOO(0UL<nrows>, 0UL<ncols>, [])
-    Assert.Equal(expected, actual)
+
+    Assert.Equal(expected, cooMap coo f)
+    Assert.Equal(expected, cooMapi coo (fun _ _ v -> f v))
 
 // === cooMap2 tests ===
 
@@ -385,27 +385,6 @@ let ``cooMapi empty input`` () =
     Assert.Equal(expected, actual)
 
 [<Fact>]
-let ``cooMapi fills missing cells (general form)`` () =
-    let nrows = 3UL<nrows>
-    let ncols = 3UL<ncols>
-
-    let data = [ (0UL<rowindex>, 0UL<colindex>, 1); (2UL<rowindex>, 2UL<colindex>, 5) ]
-    let coo = ArrayCOO(nrows, ncols, data)
-
-    let f _i _j v = Some(defaultArg v 0)
-
-    let actual = cooMapi coo f
-
-    Assert.Equal(nrows, actual.nrows)
-    Assert.Equal(ncols, actual.ncols)
-    Assert.Equal(9, actual.list.Length)
-
-    Assert.Equal(
-        Array.tryFind (fun (i, j, _) -> i = 2UL<rowindex> && j = 2UL<colindex>) actual.list,
-        Some(2UL<rowindex>, 2UL<colindex>, 5)
-    )
-
-[<Fact>]
 let ``cooMapi position-dependent fill of missing cells`` () =
     let nrows = 2UL<nrows>
     let ncols = 2UL<ncols>
@@ -427,14 +406,6 @@ let ``cooMapi position-dependent fill of missing cells`` () =
           (1UL<rowindex>, 1UL<colindex>, 2) ]
 
     Assert.Equal<COOEntry<int>[]>(Array.ofList expected, actual.list)
-
-[<Fact>]
-let ``cooMapi zero-size matrix`` () =
-    let coo = ArrayCOO(0UL<nrows>, 0UL<ncols>, [])
-    let f _i _j v = v |> Option.map (fun v -> v * 2)
-    let actual = cooMapi coo f
-    let expected = ArrayCOO(0UL<nrows>, 0UL<ncols>, [])
-    Assert.Equal(expected, actual)
 
 // === cooMap2i tests ===
 
@@ -526,202 +497,98 @@ let ``cooMap2i empty inputs`` () =
 
 // === mxmcoo tests ===
 
+let private listCoo nrows ncols entries = COOList.ListCOO(nrows, ncols, entries)
+
+let private assertBothFormats
+    (op_add: 'c option -> 'c option -> 'c option)
+    (op_mult: 'a option -> 'b option -> 'c option)
+    (nrows1: uint64<nrows>)
+    (ncols1: uint64<ncols>)
+    (nrows2: uint64<nrows>)
+    (ncols2: uint64<ncols>)
+    (m1: (uint64<rowindex> * uint64<colindex> * 'a) list)
+    (m2: (uint64<rowindex> * uint64<colindex> * 'b) list)
+    (expected: (uint64<rowindex> * uint64<colindex> * 'c) list)
+    =
+    let arr1 = ArrayCOO(nrows1, ncols1, m1)
+    let arr2 = ArrayCOO(nrows2, ncols2, m2)
+
+    match COOArray.mxmcoo op_add op_mult arr1 arr2 with
+    | Ok actual ->
+        Assert.Equal(nrows1, actual.nrows)
+        Assert.Equal(ncols2, actual.ncols)
+        Assert.Equal<COOEntry<'c>[]>(Array.ofList expected, actual.list)
+    | Error e -> failwith (e.ToString())
+
+    let lst1 = listCoo nrows1 ncols1 m1
+    let lst2 = listCoo nrows2 ncols2 m2
+
+    match COOList.mxmcoo op_add op_mult lst1 lst2 with
+    | Ok actual ->
+        Assert.Equal(nrows1, actual.nrows)
+        Assert.Equal(ncols2, actual.ncols)
+        Assert.Equal<COOEntry<'c> list>(expected, actual.entries)
+        Assert.True(keysAscending actual.entries, "entries are not sorted ascending")
+    | Error e -> failwith (e.ToString())
+
+let private absorbingAdd (x: int option) (y: int option) =
+    match (x, y) with
+    | Some a, Some b -> Some(a + b)
+    | Some a, _
+    | _, Some a -> Some a
+    | _ -> None
+
+let private absorbingMult (x: int option) (y: int option) =
+    match (x, y) with
+    | Some a, Some b -> Some(a * b)
+    | Some a, _
+    | _, Some a -> Some a
+    | _ -> None
+
 [<Fact>]
 let ``Sparse mxmcoo`` () =
     let m1 =
-        let d =
-            [ 0UL<rowindex>, 0UL<colindex>, 1
-              1UL<rowindex>, 1UL<colindex>, 2
-              2UL<rowindex>, 2UL<colindex>, 3 ]
-
-        ArrayCOO(3UL<nrows>, 3UL<ncols>, d)
+        [ 0UL<rowindex>, 0UL<colindex>, 1
+          1UL<rowindex>, 1UL<colindex>, 2
+          2UL<rowindex>, 2UL<colindex>, 3 ]
 
     let m2 =
-        let d =
-            [ 0UL<rowindex>, 0UL<colindex>, 3
-              1UL<rowindex>, 1UL<colindex>, 2
-              2UL<rowindex>, 2UL<colindex>, 1 ]
-
-        ArrayCOO(3UL<nrows>, 3UL<ncols>, d)
+        [ 0UL<rowindex>, 0UL<colindex>, 3
+          1UL<rowindex>, 1UL<colindex>, 2
+          2UL<rowindex>, 2UL<colindex>, 1 ]
 
     let expected =
-        let d =
-            [ 0UL<rowindex>, 0UL<colindex>, 3
-              1UL<rowindex>, 1UL<colindex>, 4
-              2UL<rowindex>, 2UL<colindex>, 3 ]
+        [ 0UL<rowindex>, 0UL<colindex>, 3
+          1UL<rowindex>, 1UL<colindex>, 4
+          2UL<rowindex>, 2UL<colindex>, 3 ]
 
-        ArrayCOO(3UL<nrows>, 3UL<ncols>, d)
-
-    match COOArray.mxmcoo op_add op_mult m1 m2 with
-    | Ok actual ->
-        Assert.Equal(expected.nrows, actual.nrows)
-        Assert.Equal(expected.ncols, actual.ncols)
-        Assert.Equal<COOEntry<_>[]>(expected.list, actual.list)
-    | Error e -> failwith (e.ToString())
+    assertBothFormats op_add op_mult 3UL<nrows> 3UL<ncols> 3UL<nrows> 3UL<ncols> m1 m2 expected
 
 [<Fact>]
 let ``Shrinking mxmcoo`` () =
     let m1 =
-        let d =
-            [ 0UL<rowindex>, 0UL<colindex>, 1
-              0UL<rowindex>, 2UL<colindex>, 2
-              1UL<rowindex>, 1UL<colindex>, 3 ]
-
-        ArrayCOO(2UL<nrows>, 3UL<ncols>, d)
+        [ 0UL<rowindex>, 0UL<colindex>, 1
+          0UL<rowindex>, 2UL<colindex>, 2
+          1UL<rowindex>, 1UL<colindex>, 3 ]
 
     let m2 =
-        let d =
-            [ 0UL<rowindex>, 1UL<colindex>, 4
-              1UL<rowindex>, 0UL<colindex>, 5
-              2UL<rowindex>, 0UL<colindex>, 6 ]
-
-        ArrayCOO(3UL<nrows>, 2UL<ncols>, d)
+        [ 0UL<rowindex>, 1UL<colindex>, 4
+          1UL<rowindex>, 0UL<colindex>, 5
+          2UL<rowindex>, 0UL<colindex>, 6 ]
 
     let expected =
-        let d =
-            [ 0UL<rowindex>, 0UL<colindex>, 12
-              0UL<rowindex>, 1UL<colindex>, 4
-              1UL<rowindex>, 0UL<colindex>, 15 ]
+        [ 0UL<rowindex>, 0UL<colindex>, 12
+          0UL<rowindex>, 1UL<colindex>, 4
+          1UL<rowindex>, 0UL<colindex>, 15 ]
 
-        ArrayCOO(2UL<nrows>, 2UL<ncols>, d)
-
-    match COOArray.mxmcoo op_add op_mult m1 m2 with
-    | Ok actual ->
-        Assert.Equal(expected.nrows, actual.nrows)
-        Assert.Equal(expected.ncols, actual.ncols)
-        Assert.Equal<COOEntry<_>[]>(expected.list, actual.list)
-    | Error e -> failwith (e.ToString())
-
+    assertBothFormats op_add op_mult 2UL<nrows> 3UL<ncols> 3UL<nrows> 2UL<ncols> m1 m2 expected
 
 [<Fact>]
 let ``mxmcoo with non-absorbing op_mult`` () =
-    let op_add x y =
-        match (x, y) with
-        | Some(a), Some(b) -> Some(a + b)
-        | Some a, _
-        | _, Some a -> Some a
-        | _ -> None
-
-    let op_mult x y =
-        match (x, y) with
-        | Some(a), Some(b) -> Some(a * b)
-        | Some a, _
-        | _, Some a -> Some a
-        | _ -> None
-
-    let m1 =
-        let d = [ 0UL<rowindex>, 0UL<colindex>, 1; 0UL<rowindex>, 1UL<colindex>, 2 ]
-
-        ArrayCOO(1UL<nrows>, 2UL<ncols>, d)
-
-    let m2 =
-        let d = [ 0UL<rowindex>, 0UL<colindex>, 3 ]
-
-        ArrayCOO(2UL<nrows>, 1UL<ncols>, d)
-
-    match COOArray.mxmcoo op_add op_mult m1 m2 with
-    | Ok actual ->
-        Assert.Equal(1UL<nrows>, actual.nrows)
-        Assert.Equal(1UL<ncols>, actual.ncols)
-        Assert.Equal(1, actual.list.Length)
-        Assert.Equal(Some 5, actual.list |> Array.tryHead |> Option.map (fun (_, _, v) -> v))
-    | Error e -> failwith (e.ToString())
-
-// === mxmcoo list tests ===
-
-let private listCoo nrows ncols entries = COOList.ListCOO(nrows, ncols, entries)
-
-[<Fact>]
-let ``Sparse mxmcoo list`` () =
-    let m1 =
-        listCoo
-            3UL<nrows>
-            3UL<ncols>
-            [ (0UL<rowindex>, 0UL<colindex>, 1)
-              (1UL<rowindex>, 1UL<colindex>, 2)
-              (2UL<rowindex>, 2UL<colindex>, 3) ]
-
-    let m2 =
-        listCoo
-            3UL<nrows>
-            3UL<ncols>
-            [ (0UL<rowindex>, 0UL<colindex>, 3)
-              (1UL<rowindex>, 1UL<colindex>, 2)
-              (2UL<rowindex>, 2UL<colindex>, 1) ]
-
-    let expected =
-        [ (0UL<rowindex>, 0UL<colindex>, 3)
-          (1UL<rowindex>, 1UL<colindex>, 4)
-          (2UL<rowindex>, 2UL<colindex>, 3) ]
-
-    match COOList.mxmcoo op_add op_mult m1 m2 with
-    | Ok actual ->
-        Assert.True((expected = actual.entries), "Sparse mxmcoo list: entries differ")
-        Assert.True(keysAscending actual.entries)
-    | Error e -> failwith (e.ToString())
-
-[<Fact>]
-let ``Shrinking mxmcoo list`` () =
-    let m1 =
-        listCoo
-            2UL<nrows>
-            3UL<ncols>
-            [ (0UL<rowindex>, 0UL<colindex>, 1)
-              (0UL<rowindex>, 2UL<colindex>, 2)
-              (1UL<rowindex>, 1UL<colindex>, 3) ]
-
-    let m2 =
-        listCoo
-            3UL<nrows>
-            2UL<ncols>
-            [ (0UL<rowindex>, 1UL<colindex>, 4)
-              (1UL<rowindex>, 0UL<colindex>, 5)
-              (2UL<rowindex>, 0UL<colindex>, 6) ]
-
-    match COOList.mxmcoo op_add op_mult m1 m2 with
-    | Ok actual ->
-        Assert.Equal(2UL<nrows>, actual.nrows)
-        Assert.Equal(2UL<ncols>, actual.ncols)
-
-        Assert.True(
-            [ (0UL<rowindex>, 0UL<colindex>, 12)
-              (0UL<rowindex>, 1UL<colindex>, 4)
-              (1UL<rowindex>, 0UL<colindex>, 15) ] =
-                actual.entries
-        )
-
-        Assert.True(keysAscending actual.entries)
-    | Error e -> failwith (e.ToString())
-
-[<Fact>]
-let ``mxmcoo with non-absorbing op_mult list`` () =
-    let op_add x y =
-        match (x, y) with
-        | Some(a), Some(b) -> Some(a + b)
-        | Some a, _
-        | _, Some a -> Some a
-        | _ -> None
-
-    let op_mult x y =
-        match (x, y) with
-        | Some(a), Some(b) -> Some(a * b)
-        | Some a, _
-        | _, Some a -> Some a
-        | _ -> None
-
-    let m1 =
-        listCoo 1UL<nrows> 2UL<ncols> [ (0UL<rowindex>, 0UL<colindex>, 1); (0UL<rowindex>, 1UL<colindex>, 2) ]
-
-    let m2 = listCoo 2UL<nrows> 1UL<ncols> [ (0UL<rowindex>, 0UL<colindex>, 3) ]
-
-    match COOList.mxmcoo op_add op_mult m1 m2 with
-    | Ok actual ->
-        Assert.Equal(1UL<nrows>, actual.nrows)
-        Assert.Equal(1UL<ncols>, actual.ncols)
-        Assert.Equal(1, actual.entries.Length)
-        Assert.Equal(Some 5, actual.entries |> List.tryHead |> Option.map (fun (_, _, v) -> v))
-        Assert.True(keysAscending actual.entries)
-    | Error e -> failwith (e.ToString())
+    let m1 = [ 0UL<rowindex>, 0UL<colindex>, 1; 0UL<rowindex>, 1UL<colindex>, 2 ]
+    let m2 = [ 0UL<rowindex>, 0UL<colindex>, 3 ]
+    let expected = [ 0UL<rowindex>, 0UL<colindex>, 5 ]
+    assertBothFormats absorbingAdd absorbingMult 1UL<nrows> 2UL<ncols> 2UL<nrows> 1UL<ncols> m1 m2 expected
 
 [<Fact>]
 let ``mxmcoo collapses products of one cell (array and list)`` () =

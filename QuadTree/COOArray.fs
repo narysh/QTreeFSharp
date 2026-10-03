@@ -3,15 +3,21 @@ module COOArray
 open Common
 open Matrix
 
-let private compareEntriesByRowCol (e1: COOEntry<'v>) (e2: COOEntry<'v>) =
-    let (i1, j1, _) = e1
-    let (i2, j2, _) = e2
-    let c = compare i1 i2
-    if c <> 0 then c else compare j1 j2
-
 let private entryComparer<'v> =
     { new System.Collections.Generic.IComparer<COOEntry<'v>> with
-        member _.Compare(e1, e2) = compareEntriesByRowCol e1 e2 }
+        member _.Compare(e1, e2) = compareCOOEntries e1 e2 }
+
+let private valueAt (entries: COOEntry<'v>[]) (ptr: byref<int>) (i: uint64<rowindex>) (j: uint64<colindex>) =
+    if ptr < entries.Length then
+        let (ei, ej, ev) = entries.[ptr]
+
+        if ei = i && ej = j then
+            ptr <- ptr + 1
+            Some ev
+        else
+            None
+    else
+        None
 
 let private iterCells
     (nrows: uint64<nrows>)
@@ -31,45 +37,71 @@ let private iterCells
 
         i <- i + 1UL
 
-let cooGet (coo: ArrayCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
-        let idx =
-            System.Array.BinarySearch(coo.list, (rowindex, colindex, Unchecked.defaultof<'a>), entryComparer<'a>)
+let private toCoordinateMap (entries: COOEntry<'v>[]) =
+    let mutable m = Map.empty
 
-        if idx >= 0 then
-            let (_, _, value) = coo.list.[idx]
-            Ok(Some value)
-        else
-            Ok None
+    for (i, j, v) in entries do
+        m <- Map.add (i, j) v m
+
+    m
+
+let private rowOf (i, _, _) = i
+let private positionOf (i, j, _) = (i, j)
+
+/// Splits entries into runs of consecutive items sharing the same key,
+/// returning (key, startIndex, endIndexExclusive) for each run in order.
+let private keyRuns<'v, 'k when 'k: equality> (keyOf: COOEntry<'v> -> 'k) (entries: COOEntry<'v>[]) =
+    let runs = ResizeArray<'k * int * int>()
+    let mutable idx = 0
+
+    while idx < entries.Length do
+        let key = keyOf entries.[idx]
+        let start = idx
+        let mutable advance = true
+
+        while idx < entries.Length && advance do
+            if keyOf entries.[idx] = key then
+                idx <- idx + 1
+            else
+                advance <- false
+
+        runs.Add((key, start, idx))
+
+    List.ofSeq runs
+
+let cooGet (coo: ArrayCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
+    validateCOOIndex coo.nrows coo.ncols "rowindex" "colindex" rowindex colindex
+
+    let idx =
+        System.Array.BinarySearch(coo.list, (rowindex, colindex, Unchecked.defaultof<'a>), entryComparer<'a>)
+
+    if idx >= 0 then
+        let (_, _, value) = coo.list.[idx]
+        Ok(Some value)
+    else
+        Ok None
 
 let cooUpdate
     (coo: ArrayCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
     : Result<ArrayCOO<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
+    validateCOOIndex coo.nrows coo.ncols "rowindex" "colindex" rowindex colindex
+
+    let idx =
+        System.Array.BinarySearch(coo.list, (rowindex, colindex, value), entryComparer<'a>)
+
+    if idx >= 0 then
+        let arr = Array.copy coo.list
+        arr.[idx] <- (rowindex, colindex, value)
+        Ok(ArrayCOO.Create(coo.nrows, coo.ncols, arr))
     else
-        let idx =
-            System.Array.BinarySearch(coo.list, (rowindex, colindex, value), entryComparer<'a>)
+        let insertAt = ~~~idx
+        let arr = Array.zeroCreate (coo.list.Length + 1)
 
-        if idx >= 0 then
-            let arr = Array.copy coo.list
-            arr.[idx] <- (rowindex, colindex, value)
-            Ok(ArrayCOO.Create(coo.nrows, coo.ncols, arr))
-        else
-            let insertAt = ~~~idx
-            let arr = Array.zeroCreate (coo.list.Length + 1)
+        Array.blit coo.list 0 arr 0 insertAt
+        arr.[insertAt] <- (rowindex, colindex, value)
+        Array.blit coo.list insertAt arr (insertAt + 1) (coo.list.Length - insertAt)
 
-            Array.blit coo.list 0 arr 0 insertAt
-            arr.[insertAt] <- (rowindex, colindex, value)
-            Array.blit coo.list insertAt arr (insertAt + 1) (coo.list.Length - insertAt)
-
-            Ok(ArrayCOO.Create(coo.nrows, coo.ncols, arr))
+        Ok(ArrayCOO.Create(coo.nrows, coo.ncols, arr))
 
 let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b> =
     match op with
@@ -107,17 +139,7 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
             let mutable ptr = 0
 
             iterCells coo.nrows coo.ncols (fun ri cj ->
-                let v =
-                    if ptr < coo.list.Length then
-                        let (ei, ej, ev) = coo.list.[ptr]
-
-                        if ei = ri && ej = cj then
-                            ptr <- ptr + 1
-                            Some ev
-                        else
-                            None
-                    else
-                        None
+                let v = valueAt coo.list &ptr ri cj
 
                 match v with
                 | Some value -> f (Some value)
@@ -130,19 +152,8 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
         let mutable ptr = 0
 
         iterCells coo.nrows coo.ncols (fun ri cj ->
-            let v =
-                if ptr < coo.list.Length then
-                    let (ei, ej, ev) = coo.list.[ptr]
-
-                    if ei = ri && ej = cj then
-                        ptr <- ptr + 1
-                        Some ev
-                    else
-                        None
-                else
-                    None
-
-            f ri cj v |> Option.iter (fun value -> buf.Add((ri, cj, value))))
+            f ri cj (valueAt coo.list &ptr ri cj)
+            |> Option.iter (fun value -> buf.Add((ri, cj, value))))
 
         ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
 
@@ -204,29 +215,8 @@ let private cooMap2Inner
                     let mutable p2 = 0
 
                     iterCells nrows ncols (fun ri cj ->
-                        let v1 =
-                            if p1 < coo1.list.Length then
-                                let (ei, ej, ev) = coo1.list.[p1]
-
-                                if ei = ri && ej = cj then
-                                    p1 <- p1 + 1
-                                    Some ev
-                                else
-                                    None
-                            else
-                                None
-
-                        let v2 =
-                            if p2 < coo2.list.Length then
-                                let (ei, ej, ev) = coo2.list.[p2]
-
-                                if ei = ri && ej = cj then
-                                    p2 <- p2 + 1
-                                    Some ev
-                                else
-                                    None
-                            else
-                                None
+                        let v1 = valueAt coo1.list &p1 ri cj
+                        let v2 = valueAt coo2.list &p2 ri cj
 
                         match f v1 v2 with
                         | Some value -> buf.Add((ri, cj, value))
@@ -239,31 +229,8 @@ let private cooMap2Inner
                 let mutable p2 = 0
 
                 iterCells nrows ncols (fun ri cj ->
-                    let v1 =
-                        if p1 < coo1.list.Length then
-                            let (ei, ej, ev) = coo1.list.[p1]
-
-                            if ei = ri && ej = cj then
-                                p1 <- p1 + 1
-                                Some ev
-                            else
-                                None
-                        else
-                            None
-
-                    let v2 =
-                        if p2 < coo2.list.Length then
-                            let (ei, ej, ev) = coo2.list.[p2]
-
-                            if ei = ri && ej = cj then
-                                p2 <- p2 + 1
-                                Some ev
-                            else
-                                None
-                        else
-                            None
-
-                    f ri cj v1 v2 |> Option.iter (fun value -> buf.Add((ri, cj, value))))
+                    f ri cj (valueAt coo1.list &p1 ri cj) (valueAt coo2.list &p2 ri cj)
+                    |> Option.iter (fun value -> buf.Add((ri, cj, value))))
 
                 buf.ToArray()
             | _ -> mergeBinary coo1.list coo2.list op
@@ -286,8 +253,7 @@ let cooMap2 (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
 let cooMap2Values (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnly f)
 
-let cooMap2AllCells (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
+let cooMap2AllCells (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f = cooMap2 coo1 coo2 f
 
 let cooMap2AtLeastOne (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValue f)
@@ -301,8 +267,7 @@ let cooMap2i (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
 let cooMap2iValues (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnlyIndexed f)
 
-let cooMap2iAllCells (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
+let cooMap2iAllCells (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f = cooMap2i coo1 coo2 f
 
 let cooMap2iAtLeastOne (coo1: ArrayCOO<'a>) (coo2: ArrayCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValueIndexed f)
@@ -334,21 +299,8 @@ let mxmcoo
             noneNone && multSomeNone && multNoneSome
 
         let generalResult () =
-            let m1Map =
-                let mutable m = Map.empty
-
-                for (i, j, v) in m1.list do
-                    m <- Map.add (i, j) v m
-
-                m
-
-            let m2Map =
-                let mutable m = Map.empty
-
-                for (i, j, v) in m2.list do
-                    m <- Map.add (i, j) v m
-
-                m
+            let m1Map = toCoordinateMap m1.list
+            let m2Map = toCoordinateMap m2.list
 
             let kCount = uint64 m1.ncols
             let result = ResizeArray<COOEntry<'c>>()
@@ -373,21 +325,11 @@ let mxmcoo
             let rowStarts2 = ResizeArray<uint64<rowindex>>()
             let rowBegins2 = ResizeArray<int>()
             let rowEnds2 = ResizeArray<int>()
-            let mutable idx = 0
 
-            while idx < m2.list.Length do
-                let (r, _, _) = m2.list.[idx]
-                let beginIdx = idx
-                let mutable advance = true
-
-                while idx < m2.list.Length && advance do
-                    let (r', _, _) = m2.list.[idx]
-
-                    if r' = r then idx <- idx + 1 else advance <- false
-
-                rowStarts2.Add(r)
-                rowBegins2.Add(beginIdx)
-                rowEnds2.Add(idx)
+            for (row, segBegin, segEnd) in keyRuns rowOf m2.list do
+                rowStarts2.Add(row)
+                rowBegins2.Add(segBegin)
+                rowEnds2.Add(segEnd)
 
             let findRowSegments (k: uint64<rowindex>) =
                 let mutable lo = 0
@@ -407,36 +349,21 @@ let mxmcoo
                     None
 
             let products = ResizeArray<COOEntry<'c>>()
-            let mutable baseIdx = 0
 
-            while baseIdx < m1.list.Length do
-                let (row, _, _) = m1.list.[baseIdx]
-                let mutable nextIdx = baseIdx + 1
-                let mutable advance = true
-
-                while nextIdx < m1.list.Length && advance do
-                    let (row', _, _) = m1.list.[nextIdx]
-
-                    if row' = row then
-                        nextIdx <- nextIdx + 1
-                    else
-                        advance <- false
-
-                for e in baseIdx .. nextIdx - 1 do
+            for (row, rowBegin, rowEnd) in keyRuns rowOf m1.list do
+                for e in rowBegin .. rowEnd - 1 do
                     let (_, k, v1) = m1.list.[e]
                     let kAsRow = uint64 k * 1UL<rowindex>
 
                     match findRowSegments kAsRow with
-                    | Some(beginIdx, endIdx) ->
-                        for q in beginIdx .. endIdx - 1 do
+                    | Some(segBegin, segEnd) ->
+                        for q in segBegin .. segEnd - 1 do
                             let (_, j, v2) = m2.list.[q]
 
                             match op_mult (Some v1) (Some v2) with
                             | Some product -> products.Add((row, j, product))
                             | None -> ()
                     | None -> ()
-
-                baseIdx <- nextIdx
 
             let canMerge =
                 let productValues =
@@ -446,36 +373,21 @@ let mxmcoo
                 |> Array.forall (fun v -> op_add (Some v) None = Some v && op_add None (Some v) = Some v)
 
             if canMerge then
-                let sortedProducts =
-                    products.ToArray()
-                    |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
-                        let c = compare i1 i2
-
-                        if c <> 0 then c else compare j1 j2)
-
+                let sortedProducts = products.ToArray() |> Array.sortWith compareCOOEntries
                 let result = ResizeArray<COOEntry<'c>>()
-                let mutable q = 0
 
-                while q < sortedProducts.Length do
-                    let (i, j, v) = sortedProducts.[q]
-                    let mutable sum = Some v
-                    let mutable qq = q + 1
-                    let mutable advance = true
+                for run in keyRuns positionOf sortedProducts do
+                    let ((i, j), runBegin, runEnd) = run
+                    let (_, _, first) = sortedProducts.[runBegin]
+                    let mutable sum = Some first
 
-                    while qq < sortedProducts.Length && advance do
-                        let (i', j', v') = sortedProducts.[qq]
-
-                        if i' = i && j' = j then
-                            sum <- op_add sum (Some v')
-                            qq <- qq + 1
-                        else
-                            advance <- false
+                    for e in (runBegin + 1) .. runEnd - 1 do
+                        let (_, _, v) = sortedProducts.[e]
+                        sum <- op_add sum (Some v)
 
                     match sum with
                     | Some value -> result.Add((i, j, value))
                     | None -> ()
-
-                    q <- qq
 
                 ArrayCOO.Create(m1.nrows, m2.ncols, result.ToArray()) |> Ok
             else

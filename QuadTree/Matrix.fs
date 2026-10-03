@@ -1,4 +1,4 @@
-module Matrix
+﻿module Matrix
 
 open Common
 
@@ -62,6 +62,25 @@ let getQuadrantCoords (pr, pc) halfSize =
 
 type COOEntry<'value> = uint64<rowindex> * uint64<colindex> * 'value
 
+let compareCOOEntries (e1: COOEntry<'v>) (e2: COOEntry<'v>) =
+    let (i1, j1, _) = e1
+    let (i2, j2, _) = e2
+    let c = compare i1 i2
+    if c <> 0 then c else compare j1 j2
+
+let validateCOOIndex
+    (nrows: uint64<nrows>)
+    (ncols: uint64<ncols>)
+    (rowParamName: string)
+    (colParamName: string)
+    (rowindex: uint64<rowindex>)
+    (colindex: uint64<colindex>)
+    =
+    if uint64 rowindex >= uint64 nrows then
+        raise (System.ArgumentOutOfRangeException(rowParamName, "Row index is outside the matrix bounds."))
+    elif uint64 colindex >= uint64 ncols then
+        raise (System.ArgumentOutOfRangeException(colParamName, "Column index is outside the matrix bounds."))
+
 [<Struct>]
 type CoordinateList<'value> =
     val nrows: uint64<nrows>
@@ -80,12 +99,7 @@ type ArrayCOO<'value> =
     val list: COOEntry<'value>[]
 
     new(_nrows, _ncols, _list: COOEntry<'value> seq) =
-        let sorted =
-            _list
-            |> Seq.toArray
-            |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
-                let c = compare i1 i2
-                if c <> 0 then c else compare j1 j2)
+        let sorted = _list |> Seq.toArray |> Array.sortWith compareCOOEntries
 
         { nrows = _nrows
           ncols = _ncols
@@ -96,10 +110,7 @@ type ArrayCOO<'value> =
             if _presorted then
                 _list
             else
-                _list
-                |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
-                    let c = compare i1 i2
-                    if c <> 0 then c else compare j1 j2)
+                _list |> Array.sortWith compareCOOEntries
 
         { nrows = _nrows
           ncols = _ncols
@@ -660,53 +671,6 @@ let mask (m1: SparseMatrix<'a>) (m2: SparseMatrix<'b>) f =
     map2 m1 m2 (fun m1 m2 -> if f m2 then m1 else None)
 
 
-let filter (matrix: SparseMatrix<'a>) (predicate: 'a -> bool) : SparseMatrix<'a> =
-    let rec inner (prow: uint64<rowindex>) (pcol: uint64<colindex>) (size: uint64<storageSize>) matrix =
-        match matrix with
-        | Node(x1, x2, x3, x4) ->
-            let halfSize = size / 2UL
-
-            let (nwR, nwC), (neR, neC), (swR, swC), (seR, seC) =
-                getQuadrantCoords (prow, pcol) (uint64 halfSize)
-
-            let t1, nvals1 = inner nwR nwC halfSize x1
-            let t2, nvals2 = inner neR neC halfSize x2
-            let t3, nvals3 = inner swR swC halfSize x3
-            let t4, nvals4 = inner seR seC halfSize x4
-            (mkNode t1 t2 t3 t4), nvals1 + nvals2 + nvals3 + nvals4
-        | Leaf(Dummy) -> Leaf(Dummy), 0UL<nvals>
-        | Leaf(UserValue(None)) -> Leaf(UserValue(None)), 0UL<nvals>
-        | Leaf(UserValue(Some(v))) ->
-            if predicate v then
-                Leaf(UserValue(Some v)), (uint64 size) * (uint64 size) * 1UL<nvals>
-            else
-                Leaf(UserValue(None)), 0UL<nvals>
-
-    let storage, nvals =
-        inner 0UL<rowindex> 0UL<colindex> matrix.storage.size matrix.storage.data
-
-    SparseMatrix(matrix.nrows, matrix.ncols, nvals, (Storage(matrix.storage.size, storage)))
-
-let exists (matrix: SparseMatrix<'a>) (predicate: 'a -> bool) : bool =
-    let rec inner tree =
-        match tree with
-        | Leaf(Dummy) -> false
-        | Leaf(UserValue(None)) -> false
-        | Leaf(UserValue(Some(v))) -> predicate v
-        | Node(nw, ne, sw, se) -> inner nw || inner ne || inner sw || inner se
-
-    inner matrix.storage.data
-
-let forall (matrix: SparseMatrix<'a>) (predicate: 'a -> bool) : bool =
-    let rec inner tree =
-        match tree with
-        | Leaf(Dummy) -> true
-        | Leaf(UserValue(None)) -> true
-        | Leaf(UserValue(Some(v))) -> predicate v
-        | Node(nw, ne, sw, se) -> inner nw && inner ne && inner sw && inner se
-
-    inner matrix.storage.data
-
 let slice
     (matrix: SparseMatrix<'a>)
     (rowStart: int)
@@ -872,19 +836,16 @@ let foldQuadtree folder state size tree =
 
     inner 0UL 0UL (uint64 size) tree state
 
-let reduceRows (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'a>) : Vector.SparseVector<'a> =
-    let nRows = int matrix.nrows
-    let length = uint64 nRows * 1UL<Vector.dataLength>
+let private reduceAlongAxis
+    (bucketCount: int)
+    (pickBucket: uint64 -> uint64 -> int)
+    (op: 'a option -> 'a option -> 'a option)
+    (matrix: SparseMatrix<'a>)
+    : Vector.SparseVector<'a> =
+    let length = uint64 bucketCount * 1UL<Vector.dataLength>
+    let buckets = Array.init bucketCount (fun _ -> ResizeArray<'a>())
 
-    let buckets = Array.init nRows (fun _ -> ResizeArray<'a>())
-
-    foldQuadtree
-        (fun _ row col v ->
-            let rowIdx = int row
-            buckets.[rowIdx].Add(v))
-        ()
-        matrix.storage.size
-        matrix.storage.data
+    foldQuadtree (fun _ row col v -> buckets.[pickBucket row col].Add(v)) () matrix.storage.size matrix.storage.data
 
     let vectorData =
         buckets
@@ -904,39 +865,12 @@ let reduceRows (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'
     match Vector.fromCoordinateList (Vector.CoordinateList(length, vectorData)) with
     | Ok v -> v
     | Error _ -> Vector.SparseVector(length, 0UL<nvals>, Vector.Storage(1UL<storageSize>, Vector.Leaf Dummy))
+
+let reduceRows (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'a>) : Vector.SparseVector<'a> =
+    reduceAlongAxis (int matrix.nrows) (fun row _ -> int row) op matrix
 
 let reduceCols (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'a>) : Vector.SparseVector<'a> =
-    let nCols = int matrix.ncols
-    let length = uint64 nCols * 1UL<Vector.dataLength>
-
-    let buckets = Array.init nCols (fun _ -> ResizeArray<'a>())
-
-    foldQuadtree
-        (fun _ row col v ->
-            let colIdx = int col
-            buckets.[colIdx].Add(v))
-        ()
-        matrix.storage.size
-        matrix.storage.data
-
-    let vectorData =
-        buckets
-        |> Array.mapi (fun idx bucket ->
-            if bucket.Count = 0 then
-                None
-            else
-                let mutable acc = Some bucket.[0]
-
-                for i in 1 .. bucket.Count - 1 do
-                    acc <- op acc (Some bucket.[i])
-
-                Some(uint64 idx * 1UL<Vector.index>, acc.Value))
-        |> Array.choose id
-        |> Array.toList
-
-    match Vector.fromCoordinateList (Vector.CoordinateList(length, vectorData)) with
-    | Ok v -> v
-    | Error _ -> Vector.SparseVector(length, 0UL<nvals>, Vector.Storage(1UL<storageSize>, Vector.Leaf Dummy))
+    reduceAlongAxis (int matrix.ncols) (fun _ col -> int col) op matrix
 
 let kroneckerProduct
     (matrixA: SparseMatrix<'a>)

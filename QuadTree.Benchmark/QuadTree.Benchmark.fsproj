@@ -9,9 +9,6 @@
   <ItemGroup>
     <Compile Include="AVLSet.fs"/>
     <Compile Include="Utils.fs"/>
-    <Compile Include="Filters.fs"/>
-    <Compile Include="Exists.fs"/>
-    <Compile Include="Forall.fs"/>
     <Compile Include="BFS.fs"/>
     <Compile Include="SSSP.fs"/>
     <Compile Include="Triangles.fs"/>

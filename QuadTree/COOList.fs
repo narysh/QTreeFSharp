@@ -2,9 +2,7 @@ module COOList
 
 open Common
 open Matrix
-
-let private range (count: uint64) =
-    if count = 0UL then [] else [ 0UL .. count - 1UL ]
+open COOArray
 
 [<Struct>]
 type ListCOO<'value> =
@@ -23,258 +21,89 @@ let fromArray (coo: ArrayCOO<'a>) : ListCOO<'a> =
 let toArray (coo: ListCOO<'a>) : ArrayCOO<'a> =
     ArrayCOO.Create(coo.nrows, coo.ncols, Array.ofList coo.entries)
 
+let private mapArrayResult f coo = f (toArray coo) |> Result.map fromArray
+
 let cooGet (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
-        match coo.entries |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
-        | Some(_, _, value) -> Ok(Some value)
-        | None -> Ok None
+    validateCOOIndex coo.nrows coo.ncols "rowindex" "colindex" rowindex colindex
+
+    match coo.entries |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
+    | Some(_, _, value) -> Ok(Some value)
+    | None -> Ok None
 
 let cooUpdate
     (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
     : Result<ListCOO<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
-        let mutable acc = []
-        let mutable rest = coo.entries
-        let mutable inserted = false
+    validateCOOIndex coo.nrows coo.ncols "rowindex" "colindex" rowindex colindex
 
-        while rest <> [] && not inserted do
-            let (i, j, v) = rest.Head
+    let mutable acc = []
+    let mutable rest = coo.entries
+    let mutable inserted = false
 
-            if i = rowindex && j = colindex then
-                acc <- (rowindex, colindex, value) :: acc
-                rest <- rest.Tail
-                inserted <- true
-            elif rowindex < i || (rowindex = i && colindex < j) then
-                acc <- (rowindex, colindex, value) :: acc
-                inserted <- true
-            else
-                acc <- (i, j, v) :: acc
-                rest <- rest.Tail
+    while rest <> [] && not inserted do
+        let (i, j, v) = rest.Head
 
-        if not inserted then
+        if i = rowindex && j = colindex then
             acc <- (rowindex, colindex, value) :: acc
-
-        while rest <> [] do
-            let entry = rest.Head
-            acc <- entry :: acc
+            rest <- rest.Tail
+            inserted <- true
+        elif rowindex < i || (rowindex = i && colindex < j) then
+            acc <- (rowindex, colindex, value) :: acc
+            inserted <- true
+        else
+            acc <- (i, j, v) :: acc
             rest <- rest.Tail
 
-        Ok(ListCOO<'a>(coo.nrows, coo.ncols, List.rev acc))
+    if not inserted then
+        acc <- (rowindex, colindex, value) :: acc
 
-let private cooMapInner (coo: ListCOO<'a>) (op: UnaryOp<'a, 'b>) : ListCOO<'b> =
-    let result =
-        match op with
-        | UnaryOp.ValuesOnly f ->
-            coo.entries
-            |> List.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
-        | UnaryOp.ValuesOnlyIndexed f ->
-            coo.entries
-            |> List.choose (fun (i, j, v) -> f i j v |> Option.map (fun r -> (i, j, r)))
-        | UnaryOp.AllCells f ->
-            match f None with
-            | None ->
-                coo.entries
-                |> List.choose (fun (i, j, v) -> f (Some v) |> Option.map (fun r -> (i, j, r)))
-            | Some fnone ->
-                let mutable rest = coo.entries
+    while rest <> [] do
+        let entry = rest.Head
+        acc <- entry :: acc
+        rest <- rest.Tail
 
-                [ for i in range (uint64 coo.nrows) do
-                      let ri = i * 1UL<rowindex>
+    Ok(ListCOO<'a>(coo.nrows, coo.ncols, List.rev acc))
 
-                      for j in range (uint64 coo.ncols) do
-                          let cj = j * 1UL<colindex>
+let cooMap (coo: ListCOO<'a>) f =
+    COOArray.cooMap (toArray coo) f |> fromArray
 
-                          let value =
-                              match rest with
-                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                  rest <- tail
-                                  Some ev
-                              | _ -> None
-
-                          let res =
-                              match value with
-                              | Some v -> f (Some v)
-                              | None -> Some fnone
-
-                          match res with
-                          | Some value -> yield (ri, cj, value)
-                          | None -> () ]
-        | UnaryOp.AllCellsIndexed f ->
-            let mutable rest = coo.entries
-
-            [ for i in range (uint64 coo.nrows) do
-                  let ri = i * 1UL<rowindex>
-
-                  for j in range (uint64 coo.ncols) do
-                      let cj = j * 1UL<colindex>
-
-                      let value =
-                          match rest with
-                          | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                              rest <- tail
-                              Some ev
-                          | _ -> None
-
-                      match f ri cj value with
-                      | Some value -> yield (ri, cj, value)
-                      | None -> () ]
-
-    ListCOO<'b>(coo.nrows, coo.ncols, result)
-
-let private mergeBinary (l1: COOEntry<'a> list) (l2: COOEntry<'b> list) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c> list =
-    let mutable acc = []
-    let mutable rest1 = l1
-    let mutable rest2 = l2
-
-    let emit i j v1 v2 =
-        match applyBinary op i j v1 v2 with
-        | Some r -> acc <- (i, j, r) :: acc
-        | None -> ()
-
-    while rest1 <> [] || rest2 <> [] do
-        match rest1, rest2 with
-        | [], [] -> ()
-        | (i, j, v1) :: t1, [] ->
-            emit i j (Some v1) None
-            rest1 <- t1
-        | [], (i, j, v2) :: t2 ->
-            emit i j None (Some v2)
-            rest2 <- t2
-        | (i1, j1, v1) :: t1, (i2, j2, v2) :: t2 ->
-            if i1 = i2 && j1 = j2 then
-                emit i1 j1 (Some v1) (Some v2)
-                rest1 <- t1
-                rest2 <- t2
-            elif (i1, j1) < (i2, j2) then
-                emit i1 j1 (Some v1) None
-                rest1 <- t1
-            else
-                emit i2 j2 None (Some v2)
-                rest2 <- t2
-
-    List.rev acc
-
-let private cooMap2Inner
-    (coo1: ListCOO<'a>)
-    (coo2: ListCOO<'b>)
-    (op: BinaryOp<'a, 'b, 'c>)
-    : Result<ListCOO<'c>, Error> =
-    if uint64 coo1.nrows <> uint64 coo2.nrows || uint64 coo1.ncols <> uint64 coo2.ncols then
-        Error Error.InconsistentSizeOfArguments
-    else
-        let nrows = coo1.nrows
-        let ncols = coo1.ncols
-
-        let result =
-            match op with
-            | BinaryOp.AllCells f ->
-                match f None None with
-                | None -> mergeBinary coo1.entries coo2.entries op
-                | Some _ ->
-                    let mutable rest1 = coo1.entries
-                    let mutable rest2 = coo2.entries
-
-                    [ for i in range (uint64 nrows) do
-                          let ri = i * 1UL<rowindex>
-
-                          for j in range (uint64 ncols) do
-                              let cj = j * 1UL<colindex>
-
-                              let v1 =
-                                  match rest1 with
-                                  | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                      rest1 <- tail
-                                      Some ev
-                                  | _ -> None
-
-                              let v2 =
-                                  match rest2 with
-                                  | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                      rest2 <- tail
-                                      Some ev
-                                  | _ -> None
-
-                              match f v1 v2 with
-                              | Some value -> yield (ri, cj, value)
-                              | None -> () ]
-            | BinaryOp.AllCellsIndexed f ->
-                let mutable rest1 = coo1.entries
-                let mutable rest2 = coo2.entries
-
-                [ for i in range (uint64 nrows) do
-                      let ri = i * 1UL<rowindex>
-
-                      for j in range (uint64 ncols) do
-                          let cj = j * 1UL<colindex>
-
-                          let v1 =
-                              match rest1 with
-                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                  rest1 <- tail
-                                  Some ev
-                              | _ -> None
-
-                          let v2 =
-                              match rest2 with
-                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                  rest2 <- tail
-                                  Some ev
-                              | _ -> None
-
-                          match f ri cj v1 v2 with
-                          | Some value -> yield (ri, cj, value)
-                          | None -> () ]
-            | _ -> mergeBinary coo1.entries coo2.entries op
-
-        ListCOO<'c>(nrows, ncols, result) |> Ok
-
-let cooMap (coo: ListCOO<'a>) f = cooMapInner coo (UnaryOp.AllCells f)
-
-let cooMapValues (coo: ListCOO<'a>) f = cooMapInner coo (UnaryOp.ValuesOnly f)
+let cooMapValues (coo: ListCOO<'a>) f =
+    COOArray.cooMapValues (toArray coo) f |> fromArray
 
 let cooMapi (coo: ListCOO<'a>) f =
-    cooMapInner coo (UnaryOp.AllCellsIndexed f)
+    COOArray.cooMapi (toArray coo) f |> fromArray
 
 let cooMapiValues (coo: ListCOO<'a>) f =
-    cooMapInner coo (UnaryOp.ValuesOnlyIndexed f)
+    COOArray.cooMapiValues (toArray coo) f |> fromArray
 
 let cooMap2 (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
+    mapArrayResult (fun a -> COOArray.cooMap2 a (toArray coo2) f) coo1
 
 let cooMap2Values (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnly f)
+    mapArrayResult (fun a -> COOArray.cooMap2Values a (toArray coo2) f) coo1
 
 let cooMap2AllCells (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
+    mapArrayResult (fun a -> COOArray.cooMap2AllCells a (toArray coo2) f) coo1
 
 let cooMap2AtLeastOne (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValue f)
+    mapArrayResult (fun a -> COOArray.cooMap2AtLeastOne a (toArray coo2) f) coo1
 
 let cooMap2LeftValues (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.LeftValuesOnly f)
+    mapArrayResult (fun a -> COOArray.cooMap2LeftValues a (toArray coo2) f) coo1
 
 let cooMap2i (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
+    mapArrayResult (fun a -> COOArray.cooMap2i a (toArray coo2) f) coo1
 
 let cooMap2iValues (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnlyIndexed f)
+    mapArrayResult (fun a -> COOArray.cooMap2iValues a (toArray coo2) f) coo1
 
 let cooMap2iAllCells (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
+    mapArrayResult (fun a -> COOArray.cooMap2iAllCells a (toArray coo2) f) coo1
 
 let cooMap2iAtLeastOne (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValueIndexed f)
+    mapArrayResult (fun a -> COOArray.cooMap2iAtLeastOne a (toArray coo2) f) coo1
 
 let cooMap2iLeftValues (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.LeftValuesOnlyIndexed f)
+    mapArrayResult (fun a -> COOArray.cooMap2iLeftValues a (toArray coo2) f) coo1
 
 let mxmcoo
     (op_add: 'c option -> 'c option -> 'c option)
@@ -282,87 +111,4 @@ let mxmcoo
     (m1: ListCOO<'a>)
     (m2: ListCOO<'b>)
     =
-    if uint64 m1.ncols <> uint64 m2.nrows then
-        Error Error.InconsistentSizeOfArguments
-    else
-        let entries1 = m1.entries
-        let entries2 = m2.entries
-
-        let valuesOf (entries: (uint64<rowindex> * uint64<colindex> * 'v) list) =
-            entries |> List.map (fun (_, _, v) -> v) |> List.distinct
-
-        let canOptimize =
-            let noneNone = op_mult None None = None
-
-            let multSomeNone =
-                valuesOf entries1 |> List.forall (fun v -> op_mult (Some v) None = None)
-
-            let multNoneSome =
-                valuesOf entries2 |> List.forall (fun v -> op_mult None (Some v) = None)
-
-            noneNone && multSomeNone && multNoneSome
-
-        let generalResult () =
-            let m1Map = entries1 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
-            let m2Map = entries2 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
-            let kCount = uint64 m1.ncols
-
-            let result =
-                [ for i in range (uint64 m1.nrows) do
-                      let ri = i * 1UL<rowindex>
-
-                      for j in range (uint64 m2.ncols) do
-                          let cj = j * 1UL<colindex>
-
-                          let products =
-                              [ for k in range kCount do
-                                    let a = m1Map |> Map.tryFind (ri, k * 1UL<colindex>)
-                                    let b = m2Map |> Map.tryFind (k * 1UL<rowindex>, cj)
-                                    yield op_mult a b ]
-
-                          let sum = products |> List.fold (fun acc p -> op_add acc p) None
-
-                          match sum with
-                          | Some value -> yield (ri, cj, value)
-                          | None -> () ]
-
-            ListCOO<'c>(m1.nrows, m2.ncols, result)
-
-        if canOptimize then
-            let m1ByRow = entries1 |> List.groupBy (fun (i, _, _) -> i) |> Map.ofList
-            let m2ByRow = entries2 |> List.groupBy (fun (k, _, _) -> k) |> Map.ofList
-
-            let result =
-                [ for KeyValue(i, m1Entries) in m1ByRow do
-                      for (_, k, v1) in m1Entries do
-                          let kAsRow = uint64 k * 1UL<rowindex>
-
-                          match m2ByRow |> Map.tryFind kAsRow with
-                          | Some m2Entries ->
-                              for (_, j, v2) in m2Entries do
-                                  match op_mult (Some v1) (Some v2) with
-                                  | Some product -> yield (i, j, product)
-                                  | None -> ()
-                          | None -> () ]
-
-            let canMerge =
-                let productValues = result |> List.map (fun (_, _, v) -> v) |> List.distinct
-
-                productValues
-                |> List.forall (fun v -> op_add (Some v) None = Some v && op_add None (Some v) = Some v)
-
-            if canMerge then
-                let grouped =
-                    result
-                    |> List.groupBy (fun (i, j, _) -> (i, j))
-                    |> List.map (fun ((i, j), entries) ->
-                        let sum = entries |> List.map (fun (_, _, v) -> Some v) |> List.reduce op_add
-                        (i, j, sum))
-                    |> List.choose (fun (i, j, v) -> v |> Option.map (fun v -> (i, j, v)))
-                    |> List.sortBy (fun (i, j, _) -> (i, j))
-
-                ListCOO<'c>(m1.nrows, m2.ncols, grouped) |> Ok
-            else
-                generalResult () |> Ok
-        else
-            generalResult () |> Ok
+    COOArray.mxmcoo op_add op_mult (toArray m1) (toArray m2) |> Result.map fromArray

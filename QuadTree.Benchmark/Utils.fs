@@ -48,6 +48,18 @@ let readMtxRaw path directed =
 
 let readMtx path directed = readMtxRaw path directed |> snd
 
+/// Benchmarks funnel a Result into a mutable result field; keeping that in one
+/// place avoids repeating the same match in every benchmark body.
+let assignOnOk (result: Result<'a, 'e>) (assign: 'a -> unit) =
+    match result with
+    | Ok value -> assign value
+    | Error _ -> ()
+
+let assignOrFail (what: string) (result: Result<'a, 'e>) (assign: 'a -> unit) =
+    match result with
+    | Ok value -> assign value
+    | Error _ -> failwith what
+
 let op_add (x: double option) (y: double option) =
     match x, y with
     | Some a, Some b -> Some(a + b)
@@ -59,3 +71,79 @@ let op_mult (x: double option) (y: double option) =
     match x, y with
     | Some a, Some b -> Some(a * b)
     | _ -> None
+
+let doubleMap (v: double option) = v |> Option.map (fun x -> x * 2.0)
+
+let doubleMapi (i: uint64<Matrix.rowindex>) (j: uint64<Matrix.colindex>) (v: double option) =
+    v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j))
+
+let doubleMap2i (i: uint64<Matrix.rowindex>) (j: uint64<Matrix.colindex>) (x: double option) (y: double option) =
+    match x, y with
+    | Some a, Some b -> Some(a + b + float (uint64 i))
+    | Some a, None -> Some a
+    | None, Some b -> Some b
+    | None, None -> None
+
+let sumLookups
+    limit
+    (coords: (uint64<Matrix.rowindex> * uint64<Matrix.colindex>)[])
+    (get: _ -> Result<double option, Matrix.Error>)
+    =
+    let mutable acc = 0.0
+    let last = min limit coords.Length - 1
+
+    for k = 0 to last do
+        let (i, j) = coords.[k]
+
+        match get (i, j) with
+        | Ok(Some v) -> acc <- acc + v
+        | _ -> ()
+
+    acc
+
+let updateLookups<'m>
+    limit
+    (coords: (uint64<Matrix.rowindex> * uint64<Matrix.colindex>)[])
+    (values: double[])
+    (m: 'm)
+    (update: 'm -> uint64<Matrix.rowindex> -> uint64<Matrix.colindex> -> double -> Result<'m, Matrix.Error>)
+    =
+    let mutable acc = m
+    let last = min limit coords.Length - 1
+
+    for k = 0 to last do
+        let (i, j) = coords.[k]
+
+        match update acc i j (values.[k] * 2.0) with
+        | Ok updated -> acc <- updated
+        | _ -> ()
+
+    acc
+
+let sumCells size (get: uint64<Matrix.rowindex> -> uint64<Matrix.colindex> -> Result<double option, Matrix.Error>) =
+    let mutable acc = 0.0
+    let last = uint64 size - 1UL
+
+    for i in 0UL .. last do
+        for j in 0UL .. last do
+            match get (i * 1UL<Matrix.rowindex>) (j * 1UL<Matrix.colindex>) with
+            | Ok(Some v) -> acc <- acc + v
+            | _ -> ()
+
+    acc
+
+let updateCells<'m>
+    size
+    (m: 'm)
+    (update: 'm -> uint64<Matrix.rowindex> -> uint64<Matrix.colindex> -> double -> Result<'m, Matrix.Error>)
+    =
+    let mutable acc = m
+    let last = uint64 size - 1UL
+
+    for i in 0UL .. last do
+        for j in 0UL .. last do
+            match update acc (i * 1UL<Matrix.rowindex>) (j * 1UL<Matrix.colindex>) 42.0 with
+            | Ok updated -> acc <- updated
+            | _ -> ()
+
+    acc
