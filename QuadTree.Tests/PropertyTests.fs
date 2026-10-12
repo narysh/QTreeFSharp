@@ -7,6 +7,7 @@ open FsCheck.FSharp
 open FsCheck.Xunit
 open Matrix
 open COOArray
+open OptionMonoid
 
 type Input =
     { Rows: int
@@ -137,35 +138,17 @@ let ``out-of-bounds access raises ArgumentOutOfRangeException`` (inp: Input) =
     let nrows = uint64 coo.nrows * 1UL<rowindex>
     let ncols = uint64 coo.ncols * 1UL<colindex>
 
-    let cooGetThrows =
-        try
-            cooGet (cooA, nrows, 0UL<colindex>) |> ignore
-            false
-        with :? ArgumentOutOfRangeException ->
-            true
+    Assert.Throws<ArgumentOutOfRangeException>(fun () -> cooGet (cooA, nrows, 0UL<colindex>) |> ignore)
+    |> ignore
 
-    let cooUpdateThrows =
-        try
-            cooUpdate (cooA, nrows, 0UL<colindex>, 1) |> ignore
-            false
-        with :? ArgumentOutOfRangeException ->
-            true
+    Assert.Throws<ArgumentOutOfRangeException>(fun () -> cooUpdate (cooA, nrows, 0UL<colindex>, 1) |> ignore)
+    |> ignore
 
-    let matrixGetThrows =
-        try
-            Matrix.get qt nrows 0UL<colindex> |> ignore
-            false
-        with :? ArgumentOutOfRangeException ->
-            true
+    Assert.Throws<ArgumentOutOfRangeException>(fun () -> Matrix.get qt nrows 0UL<colindex> |> ignore)
+    |> ignore
 
-    let matrixSetThrows =
-        try
-            Matrix.set qt nrows 0UL<colindex> 1 |> ignore
-            false
-        with :? ArgumentOutOfRangeException ->
-            true
-
-    cooGetThrows && cooUpdateThrows && matrixGetThrows && matrixSetThrows
+    Assert.Throws<ArgumentOutOfRangeException>(fun () -> Matrix.set qt nrows 0UL<colindex> 1 |> ignore)
+    |> ignore
 
 let private cooWithDims (nrows: uint64) (ncols: uint64) (inp: Input) : CoordinateList<int> =
     let entries =
@@ -178,18 +161,6 @@ let private cooWithDims (nrows: uint64) (ncols: uint64) (inp: Input) : Coordinat
 
     CoordinateList(nrows * 1UL<nrows>, ncols * 1UL<ncols>, entries)
 
-let private opAdd x y =
-    match (x, y) with
-    | Some(a), Some(b) -> Some(a + b)
-    | Some a, None
-    | None, Some a -> Some a
-    | _ -> None
-
-let private opMul x y =
-    match (x, y) with
-    | Some(a), Some(b) -> Some(a * b)
-    | _ -> None
-
 let private naiveMxm (nrowsA: uint64) (k: uint64) (ncolsB: uint64) (m1: COOEntry<int> list) (m2: COOEntry<int> list) =
     let m1Map = m1 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
     let m2Map = m2 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
@@ -200,9 +171,9 @@ let private naiveMxm (nrowsA: uint64) (k: uint64) (ncolsB: uint64) (m1: COOEntry
                   [ for t in 0UL .. k - 1UL do
                         let a = m1Map |> Map.tryFind (i * 1UL<rowindex>, t * 1UL<colindex>)
                         let b = m2Map |> Map.tryFind (t * 1UL<rowindex>, j * 1UL<colindex>)
-                        yield opMul a b ]
+                        yield op_mult a b ]
 
-              match products |> List.fold (fun acc p -> opAdd acc p) None with
+              match products |> List.fold (fun acc p -> op_add acc p) None with
               | Some v -> yield (i * 1UL<rowindex>, j * 1UL<colindex>, v)
               | None -> () ]
     |> List.sortBy (fun (i, j, _) -> (i, j))
@@ -241,7 +212,8 @@ let ``mxmcoo agrees with naive multiplication, array matches list, keys are sort
         |> List.forall (fun ((i1, j1), (i2, j2)) -> i1 < i2 || (i1 = i2 && j1 < j2))
 
     match
-        COOArray.mxmcoo opAdd opMul m1A m2A, COOList.mxmcoo opAdd opMul (COOList.fromArray m1A) (COOList.fromArray m2A)
+        COOArray.mxmcoo op_add op_mult m1A m2A,
+        COOList.mxmcoo op_add op_mult (COOList.fromArray m1A) (COOList.fromArray m2A)
     with
     | Ok arr, Ok lst ->
         let arrEntries = Array.toList arr.list

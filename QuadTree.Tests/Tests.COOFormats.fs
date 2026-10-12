@@ -12,138 +12,188 @@ open Common
 
 open COOList
 
+type COO<'T> =
+    | Array of ArrayCOO<'T>
+    | List of ListCOO<'T>
+
 module Formats =
-    let create isArray r c l =
+    let create isArray r c l : COO<'T> =
         if isArray then
-            box (ArrayCOO(r, c, l))
+            COO.Array(ArrayCOO(r, c, l))
         else
-            box (ListCOO(r, c, l))
+            COO.List(ListCOO(r, c, l))
 
-    let toArray<'T> isArray (m: obj) : COOEntry<'T> array =
-        let listProp = m.GetType().GetProperty("list")
+    let toArray<'T> _isArray (m: COO<'T>) : COOEntry<'T> array =
+        match m with
+        | COO.Array a -> a.list
+        | COO.List l -> l.entries |> Array.ofList
 
-        if listProp <> null then
-            listProp.GetValue(m) :?> COOEntry<'T> array
-        else
-            let entriesProp = m.GetType().GetProperty("entries")
-            entriesProp.GetValue(m) :?> COOEntry<'T> list |> Array.ofList
+    let toList<'T> _isArray (m: COO<'T>) : COOEntry<'T> list =
+        match m with
+        | COO.Array a -> a.list |> Array.toList
+        | COO.List l -> l.entries
 
-    let toList<'T> isArray (m: obj) : COOEntry<'T> list =
-        let entriesProp = m.GetType().GetProperty("entries")
+    let nrows _isArray (m: COO<'T>) =
+        match m with
+        | COO.Array a -> a.nrows
+        | COO.List l -> l.nrows
 
-        if entriesProp <> null then
-            entriesProp.GetValue(m) :?> COOEntry<'T> list
-        else
-            let listProp = m.GetType().GetProperty("list")
-            listProp.GetValue(m) :?> COOEntry<'T> array |> Array.toList
+    let ncols _isArray (m: COO<'T>) =
+        match m with
+        | COO.Array a -> a.ncols
+        | COO.List l -> l.ncols
 
-    let nrows isArray (m: obj) =
-        m.GetType().GetProperty("nrows").GetValue(m) :?> uint64<nrows>
+    let cooMap<'T, 'U> _isArray (m: COO<'T>) f : COO<'U> =
+        match m with
+        | COO.Array a -> COO.Array(COOArray.cooMap a f)
+        | COO.List l -> COO.List(COOList.cooMap l f)
 
-    let ncols isArray (m: obj) =
-        m.GetType().GetProperty("ncols").GetValue(m) :?> uint64<ncols>
+    let cooMapValues<'T, 'U> _isArray (m: COO<'T>) f : COO<'U> =
+        match m with
+        | COO.Array a -> COO.Array(COOArray.cooMapValues a f)
+        | COO.List l -> COO.List(COOList.cooMapValues l f)
 
-    let cooMap isArray (m: obj) f =
-        if isArray then
-            box (COOArray.cooMap (unbox m) f)
-        else
-            box (COOList.cooMap (unbox m) f)
+    let cooMapi<'T, 'U> _isArray (m: COO<'T>) f : COO<'U> =
+        match m with
+        | COO.Array a -> COO.Array(COOArray.cooMapi a f)
+        | COO.List l -> COO.List(COOList.cooMapi l f)
 
-    let cooMapValues isArray (m: obj) f =
-        if isArray then
-            box (COOArray.cooMapValues (unbox m) f)
-        else
-            box (COOList.cooMapValues (unbox m) f)
+    let cooMapiValues<'T, 'U> _isArray (m: COO<'T>) f : COO<'U> =
+        match m with
+        | COO.Array a -> COO.Array(COOArray.cooMapiValues a f)
+        | COO.List l -> COO.List(COOList.cooMapiValues l f)
 
-    let cooMapi isArray (m: obj) f =
-        if isArray then
-            box (COOArray.cooMapi (unbox m) f)
-        else
-            box (COOList.cooMapi (unbox m) f)
+    let cooMap2<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2 a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2 l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMapiValues isArray (m: obj) f =
-        if isArray then
-            box (COOArray.cooMapiValues (unbox m) f)
-        else
-            box (COOList.cooMapiValues (unbox m) f)
+    let cooMap2Values<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2Values a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2Values l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2 isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2 (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2 (unbox m1) (unbox m2) f)
+    let cooMap2LeftValues<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2LeftValues a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2LeftValues l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2Values isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2Values (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2Values (unbox m1) (unbox m2) f)
+    let cooMap2AllCells<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2AllCells a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2AllCells l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2LeftValues isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2LeftValues (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2LeftValues (unbox m1) (unbox m2) f)
+    let cooMap2AtLeastOne<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2AtLeastOne a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2AtLeastOne l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2AllCells isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2AllCells (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2AllCells (unbox m1) (unbox m2) f)
+    let cooMap2i<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2i a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2i l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2AtLeastOne isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2AtLeastOne (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2AtLeastOne (unbox m1) (unbox m2) f)
+    let cooMap2iValues<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2iValues a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2iValues l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2i isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2i (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2i (unbox m1) (unbox m2) f)
+    let cooMap2iLeftValues<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2iLeftValues a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2iLeftValues l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2iValues isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2iValues (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2iValues (unbox m1) (unbox m2) f)
+    let cooMap2iAllCells<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2iAllCells a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2iAllCells l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2iLeftValues isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2iLeftValues (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2iLeftValues (unbox m1) (unbox m2) f)
+    let cooMap2iAtLeastOne<'T, 'U, 'V when 'T: equality and 'U: equality>
+        _isArray
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        f
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.cooMap2iAtLeastOne a1 a2 f |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.cooMap2iAtLeastOne l1 l2 f |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2iAllCells isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2iAllCells (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2iAllCells (unbox m1) (unbox m2) f)
+    let mxmcoo<'T, 'U, 'V when 'T: equality and 'U: equality and 'V: equality>
+        _isArray
+        (op1: 'V option -> 'V option -> 'V option)
+        (op2: 'T option -> 'U option -> 'V option)
+        (m1: COO<'T>)
+        (m2: COO<'U>)
+        : Result<COO<'V>, Error> =
+        match m1, m2 with
+        | COO.Array a1, COO.Array a2 -> COOArray.mxmcoo op1 op2 a1 a2 |> Result.map COO.Array
+        | COO.List l1, COO.List l2 -> COOList.mxmcoo op1 op2 l1 l2 |> Result.map COO.List
+        | _ -> Error Error.InconsistentSizeOfArguments
 
-    let cooMap2iAtLeastOne isArray (m1: obj) (m2: obj) f =
-        if isArray then
-            Result.map box (COOArray.cooMap2iAtLeastOne (unbox m1) (unbox m2) f)
-        else
-            Result.map box (COOList.cooMap2iAtLeastOne (unbox m1) (unbox m2) f)
+    let cooGet<'T> _isArray (m: COO<'T>, i, j) =
+        match m with
+        | COO.Array a -> COOArray.cooGet (a, i, j)
+        | COO.List l -> COOList.cooGet (l, i, j)
 
-    let mxmcoo isArray op1 op2 (m1: obj) (m2: obj) =
-        if isArray then
-            Result.map box (COOArray.mxmcoo op1 op2 (unbox m1) (unbox m2))
-        else
-            Result.map box (COOList.mxmcoo op1 op2 (unbox m1) (unbox m2))
-
-    let cooGet<'T> isArray (m: obj, i, j) =
-        if isArray then
-            COOArray.cooGet (unbox<ArrayCOO<'T>> m, i, j)
-        else
-            COOList.cooGet (unbox<ListCOO<'T>> m, i, j)
-
-    let cooUpdate isArray (m: obj, i, j, v) =
-        if isArray then
-            Result.map box (COOArray.cooUpdate (unbox m, i, j, v))
-        else
-            Result.map box (COOList.cooUpdate (unbox m, i, j, v))
+    let cooUpdate<'T when 'T: equality> _isArray (m: COO<'T>, i, j, v) : Result<COO<'T>, Error> =
+        match m with
+        | COO.Array a -> COOArray.cooUpdate (a, i, j, v) |> Result.map COO.Array
+        | COO.List l -> COOList.cooUpdate (l, i, j, v) |> Result.map COO.List
 
 
 
@@ -738,7 +788,7 @@ let private assertBothFormats
     | Ok actual ->
         Assert.Equal(nrows1, (Formats.nrows isArray actual))
         Assert.Equal(ncols2, (Formats.ncols isArray actual))
-        Assert.Equal<COOEntry<'c>[]>(Array.ofList expected, (Formats.toArray<int> isArray actual))
+        Assert.Equal<COOEntry<'c>[]>(Array.ofList expected, (Formats.toArray<'c> isArray actual))
     | Error e -> failwith (e.ToString())
 
     let lst1 = listCoo nrows1 ncols1 m1
@@ -746,8 +796,8 @@ let private assertBothFormats
 
     match COOList.mxmcoo op_add op_mult lst1 lst2 with
     | Ok actual ->
-        Assert.Equal(nrows1, (Formats.nrows isArray actual))
-        Assert.Equal(ncols2, (Formats.ncols isArray actual))
+        Assert.Equal(nrows1, actual.nrows)
+        Assert.Equal(ncols2, actual.ncols)
         Assert.Equal<COOEntry<'c> list>(expected, actual.entries)
         Assert.True(keysAscending actual.entries, "entries are not sorted ascending")
     | Error e -> failwith (e.ToString())
