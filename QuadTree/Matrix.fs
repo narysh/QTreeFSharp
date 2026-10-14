@@ -38,6 +38,8 @@ type SparseMatrix<'value> =
           nvals = _nvals
           storage = _storage }
 
+type Error = Common.Error
+
 
 
 let mkNode x1 x2 x3 x4 =
@@ -69,38 +71,6 @@ type CoordinateList<'value> =
         { nrows = _nrows
           ncols = _ncols
           list = _list }
-
-[<Struct>]
-type ArrayCOO<'value> =
-    val nrows: uint64<nrows>
-    val ncols: uint64<ncols>
-    val list: COOEntry<'value>[]
-
-    static member private SortEntries(list: COOEntry<'value> seq) =
-        list
-        |> Seq.toArray
-        |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
-            let c = compare i1 i2
-            if c <> 0 then c else compare j1 j2)
-
-    new(_nrows, _ncols, _list: COOEntry<'value> seq) =
-        { nrows = _nrows
-          ncols = _ncols
-          list = ArrayCOO<'value>.SortEntries(_list) }
-
-    new(_nrows, _ncols, _list: COOEntry<'value>[], _presorted: bool) =
-        let sorted =
-            if _presorted then
-                _list
-            else
-                ArrayCOO<'value>.SortEntries(_list)
-
-        { nrows = _nrows
-          ncols = _ncols
-          list = sorted }
-
-    static member Create(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[]) : ArrayCOO<'value> =
-        ArrayCOO<'value>(nrows, ncols, entries, true)
 
 let fromCoordinateList (coo: CoordinateList<'a>) =
     let unique =

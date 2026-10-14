@@ -223,6 +223,10 @@ let ``Formats.cooGet<int> isArray existing value`` (isArray: bool) =
 
     Assert.Equal(Ok(Some 2), actual)
 
+    match coo with
+    | COO.Array a -> Assert.Equal(Ok(Some 2), a.[0UL<rowindex>, 1UL<colindex>])
+    | COO.List l -> Assert.Equal(Ok(Some 2), l.[0UL<rowindex>, 1UL<colindex>])
+
 [<Theory>]
 [<InlineData(true)>]
 [<InlineData(false)>]
@@ -245,8 +249,8 @@ let ``Formats.cooGet<int> isArray out of bounds`` (isArray: bool) =
     let coo =
         Formats.create isArray 4UL<nrows> 4UL<ncols> ([ (0UL<rowindex>, 0UL<colindex>, 1) ])
 
-    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
-        Formats.cooGet<int> isArray (coo, 5UL<rowindex>, 5UL<colindex>) |> ignore)
+    let actual = Formats.cooGet<int> isArray (coo, 5UL<rowindex>, 5UL<colindex>)
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, actual)
 
 // === Formats.cooUpdate isArray tests ===
 
@@ -321,8 +325,8 @@ let ``Formats.cooUpdate isArray out of bounds`` (isArray: bool) =
     let coo =
         Formats.create isArray 4UL<nrows> 4UL<ncols> ([ (0UL<rowindex>, 0UL<colindex>, 1) ])
 
-    Assert.Throws<System.ArgumentOutOfRangeException>(fun () ->
-        Formats.cooUpdate isArray (coo, 5UL<rowindex>, 5UL<colindex>, 99) |> ignore)
+    let actual = Formats.cooUpdate isArray (coo, 5UL<rowindex>, 5UL<colindex>, 99)
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, actual)
 
 // === Formats.cooMap<int, int> isArray tests ===
 

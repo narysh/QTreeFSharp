@@ -138,11 +138,9 @@ let ``out-of-bounds access raises ArgumentOutOfRangeException`` (inp: Input) =
     let nrows = uint64 coo.nrows * 1UL<rowindex>
     let ncols = uint64 coo.ncols * 1UL<colindex>
 
-    Assert.Throws<ArgumentOutOfRangeException>(fun () -> cooGet (cooA, nrows, 0UL<colindex>) |> ignore)
-    |> ignore
-
-    Assert.Throws<ArgumentOutOfRangeException>(fun () -> cooUpdate (cooA, nrows, 0UL<colindex>, 1) |> ignore)
-    |> ignore
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, cooGet (cooA, nrows, 0UL<colindex>))
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, cooUpdate (cooA, nrows, 0UL<colindex>, 1))
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, cooA.[nrows, 0UL<colindex>])
 
     Assert.Throws<ArgumentOutOfRangeException>(fun () -> Matrix.get qt nrows 0UL<colindex> |> ignore)
     |> ignore

@@ -2,6 +2,7 @@ module COOList
 
 open Common
 open Matrix
+open COOArray
 
 let private range (count: uint64) =
     if count = 0UL then [] else [ 0UL .. count - 1UL ]
@@ -17,30 +18,30 @@ type ListCOO<'value> =
           ncols = _ncols
           entries = _entries }
 
+    member this.Item
+        with get (rowindex: uint64<rowindex>, colindex: uint64<colindex>): Result<option<'value>, Error> =
+            match checkBounds (uint64 this.nrows) (uint64 this.ncols) (uint64 rowindex) (uint64 colindex) with
+            | Error e -> Error e
+            | Ok() ->
+                match this.entries |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
+                | Some(_, _, value) -> Ok(Some value)
+                | None -> Ok None
+
+let cooGet (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
+    coo.[rowindex, colindex]
+
 let fromArray (coo: ArrayCOO<'a>) : ListCOO<'a> =
     ListCOO<'a>(coo.nrows, coo.ncols, Array.toList coo.list)
 
 let toArray (coo: ListCOO<'a>) : ArrayCOO<'a> =
     ArrayCOO.Create(coo.nrows, coo.ncols, Array.ofList coo.entries)
 
-let cooGet (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
-        match coo.entries |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
-        | Some(_, _, value) -> Ok(Some value)
-        | None -> Ok None
-
 let cooUpdate
     (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
     : Result<ListCOO<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
+    match checkBounds (uint64 coo.nrows) (uint64 coo.ncols) (uint64 rowindex) (uint64 colindex) with
+    | Error e -> Error e
+    | Ok() ->
         let mutable acc = []
         let mutable rest = coo.entries
         let mutable inserted = false
@@ -130,37 +131,47 @@ let private cooMapInner (coo: ListCOO<'a>) (op: UnaryOp<'a, 'b>) : ListCOO<'b> =
     ListCOO<'b>(coo.nrows, coo.ncols, result)
 
 let private mergeBinary (l1: COOEntry<'a> list) (l2: COOEntry<'b> list) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c> list =
-    let mutable acc = []
-    let mutable rest1 = l1
-    let mutable rest2 = l2
-
-    let emit i j v1 v2 =
-        match applyBinary op i j v1 v2 with
-        | Some r -> acc <- (i, j, r) :: acc
-        | None -> ()
-
-    while rest1 <> [] || rest2 <> [] do
+    let rec loop acc rest1 rest2 =
         match rest1, rest2 with
-        | [], [] -> ()
+        | [], [] -> List.rev acc
         | (i, j, v1) :: t1, [] ->
-            emit i j (Some v1) None
-            rest1 <- t1
+            let acc' =
+                match applyBinary op i j (Some v1) None with
+                | Some r -> (i, j, r) :: acc
+                | None -> acc
+
+            loop acc' t1 []
         | [], (i, j, v2) :: t2 ->
-            emit i j None (Some v2)
-            rest2 <- t2
+            let acc' =
+                match applyBinary op i j None (Some v2) with
+                | Some r -> (i, j, r) :: acc
+                | None -> acc
+
+            loop acc' [] t2
         | (i1, j1, v1) :: t1, (i2, j2, v2) :: t2 ->
             if i1 = i2 && j1 = j2 then
-                emit i1 j1 (Some v1) (Some v2)
-                rest1 <- t1
-                rest2 <- t2
-            elif (i1, j1) < (i2, j2) then
-                emit i1 j1 (Some v1) None
-                rest1 <- t1
-            else
-                emit i2 j2 None (Some v2)
-                rest2 <- t2
+                let acc' =
+                    match applyBinary op i1 j1 (Some v1) (Some v2) with
+                    | Some r -> (i1, j1, r) :: acc
+                    | None -> acc
 
-    List.rev acc
+                loop acc' t1 t2
+            elif (i1, j1) < (i2, j2) then
+                let acc' =
+                    match applyBinary op i1 j1 (Some v1) None with
+                    | Some r -> (i1, j1, r) :: acc
+                    | None -> acc
+
+                loop acc' t1 ((i2, j2, v2) :: t2)
+            else
+                let acc' =
+                    match applyBinary op i2 j2 None (Some v2) with
+                    | Some r -> (i2, j2, r) :: acc
+                    | None -> acc
+
+                loop acc' ((i1, j1, v1) :: t1) t2
+
+    loop [] l1 l2
 
 let private cooMap2Inner
     (coo1: ListCOO<'a>)

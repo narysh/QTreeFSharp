@@ -148,6 +148,12 @@ type Error =
     | InconsistentStructureOfStorages
     | InconsistentSizeOfArguments
 
+let inline checkBounds (nrows: uint64) (ncols: uint64) (r: uint64) (c: uint64) : Result<unit, Error> =
+    if r >= nrows || c >= ncols then
+        Error Error.InconsistentSizeOfArguments
+    else
+        Ok()
+
 type AtLeastOne<'a, 'b> =
     | Both of 'a * 'b
     | Left of 'a

@@ -6,13 +6,13 @@ open Result
 
 type Error =
     | EdgesCalculationProblem of LinearAlgebra.Error
-    | CEdgesCalculationProblem of Common.Error
-    | IndexCalculationProblem of Common.Error
-    | ScatterProblem of Common.Error
-    | FoldValuesProblem of Common.Error
-    | TreeSelectionProblem of Common.Error
-    | IndexInnerCalculationProblem of Common.Error
-    | DataForUpgradeParentCalculationProblem of Common.Error
+    | CEdgesCalculationProblem of Vector.Error
+    | IndexCalculationProblem of Vector.Error
+    | ScatterProblem of Vector.Error
+    | FoldValuesProblem of Vector.Error
+    | TreeSelectionProblem of Matrix.Error
+    | IndexInnerCalculationProblem of Vector.Error
+    | DataForUpgradeParentCalculationProblem of Vector.Error
 
 let mst (graph: Matrix.SparseMatrix<_>) =
 

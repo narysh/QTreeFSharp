@@ -29,6 +29,8 @@ type SparseVector<'value> =
           nvals = _nvals
           storage = _storage }
 
+type Error = Common.Error
+
 
 
 let mkNode t1 t2 =

@@ -5,8 +5,8 @@ open Result
 
 type Error =
     | NewFrontierCalculationProblem of LinearAlgebra.Error
-    | FrontierCalculationProblem of Common.Error
-    | VisitedCalculationProblem of Common.Error
+    | FrontierCalculationProblem of Vector.Error
+    | VisitedCalculationProblem of Vector.Error
 
 let bfs
     (op_add: 'c option -> 'c option -> 'c option)

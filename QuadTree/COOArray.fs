@@ -31,29 +31,65 @@ let private iterCells
 
         i <- i + 1UL
 
-let cooGet (coo: ArrayCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
-        let idx =
-            System.Array.BinarySearch(coo.list, (rowindex, colindex, Unchecked.defaultof<'a>), entryComparer<'a>)
+[<Struct>]
+type ArrayCOO<'value> =
+    val nrows: uint64<nrows>
+    val ncols: uint64<ncols>
+    val list: COOEntry<'value>[]
 
-        if idx >= 0 then
-            let (_, _, value) = coo.list.[idx]
-            Ok(Some value)
-        else
-            Ok None
+    static member private SortEntries(list: COOEntry<'value> seq) =
+        list
+        |> Seq.toArray
+        |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
+            let c = compare i1 i2
+            if c <> 0 then c else compare j1 j2)
+
+    new(_nrows, _ncols, _list: COOEntry<'value> seq) =
+        { nrows = _nrows
+          ncols = _ncols
+          list = ArrayCOO<'value>.SortEntries(_list) }
+
+    new(_nrows, _ncols, _list: COOEntry<'value>[], _presorted: bool) =
+        let sorted =
+            if _presorted then
+                _list
+            else
+                ArrayCOO<'value>.SortEntries(_list)
+
+        { nrows = _nrows
+          ncols = _ncols
+          list = sorted }
+
+    static member Create(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[]) : ArrayCOO<'value> =
+        ArrayCOO<'value>(nrows, ncols, entries, true)
+
+    member this.Item
+        with get (rowindex: uint64<rowindex>, colindex: uint64<colindex>): Result<option<'value>, Error> =
+            match checkBounds (uint64 this.nrows) (uint64 this.ncols) (uint64 rowindex) (uint64 colindex) with
+            | Error e -> Error e
+            | Ok() ->
+                let idx =
+                    System.Array.BinarySearch(
+                        this.list,
+                        (rowindex, colindex, Unchecked.defaultof<'value>),
+                        entryComparer<'value>
+                    )
+
+                if idx >= 0 then
+                    let (_, _, value) = this.list.[idx]
+                    Ok(Some value)
+                else
+                    Ok None
+
+let cooGet (coo: ArrayCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
+    coo.[rowindex, colindex]
 
 let cooUpdate
     (coo: ArrayCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
     : Result<ArrayCOO<'a>, Error> =
-    if uint64 rowindex >= uint64 coo.nrows then
-        raise (System.ArgumentOutOfRangeException("rowindex", "Row index is outside the matrix bounds."))
-    elif uint64 colindex >= uint64 coo.ncols then
-        raise (System.ArgumentOutOfRangeException("colindex", "Column index is outside the matrix bounds."))
-    else
+    match checkBounds (uint64 coo.nrows) (uint64 coo.ncols) (uint64 rowindex) (uint64 colindex) with
+    | Error e -> Error e
+    | Ok() ->
         let idx =
             System.Array.BinarySearch(coo.list, (rowindex, colindex, value), entryComparer<'a>)
 
@@ -64,7 +100,6 @@ let cooUpdate
         else
             let insertAt = ~~~idx
             let arr = Array.zeroCreate (coo.list.Length + 1)
-
             Array.blit coo.list 0 arr 0 insertAt
             arr.[insertAt] <- (rowindex, colindex, value)
             Array.blit coo.list insertAt arr (insertAt + 1) (coo.list.Length - insertAt)
@@ -74,34 +109,25 @@ let cooUpdate
 let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b> =
     match op with
     | UnaryOp.ValuesOnly f ->
-        let buf = ResizeArray<COOEntry<'b>>(coo.list.Length)
+        let res =
+            coo.list
+            |> Array.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
 
-        for (i, j, v) in coo.list do
-            match f v with
-            | Some r -> buf.Add((i, j, r))
-            | None -> ()
-
-        ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
+        ArrayCOO.Create(coo.nrows, coo.ncols, res)
     | UnaryOp.ValuesOnlyIndexed f ->
-        let buf = ResizeArray<COOEntry<'b>>(coo.list.Length)
+        let res =
+            coo.list
+            |> Array.choose (fun (i, j, v) -> f i j v |> Option.map (fun r -> (i, j, r)))
 
-        for (i, j, v) in coo.list do
-            match f i j v with
-            | Some r -> buf.Add((i, j, r))
-            | None -> ()
-
-        ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
+        ArrayCOO.Create(coo.nrows, coo.ncols, res)
     | UnaryOp.AllCells f ->
         match f None with
         | None ->
-            let buf = ResizeArray<COOEntry<'b>>(coo.list.Length)
+            let res =
+                coo.list
+                |> Array.choose (fun (i, j, v) -> f (Some v) |> Option.map (fun r -> (i, j, r)))
 
-            for (i, j, v) in coo.list do
-                match f (Some v) with
-                | Some r -> buf.Add((i, j, r))
-                | None -> ()
-
-            ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
+            ArrayCOO.Create(coo.nrows, coo.ncols, res)
         | Some fnone ->
             let buf = ResizeArray<COOEntry<'b>>()
             let mutable ptr = 0
@@ -147,40 +173,56 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
         ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
 
 let private mergeBinary (a1: COOEntry<'a>[]) (a2: COOEntry<'b>[]) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c>[] =
-    let buf = ResizeArray<COOEntry<'c>>(a1.Length + a2.Length)
-    let mutable p1 = 0
-    let mutable p2 = 0
+    let target = Array.zeroCreate (a1.Length + a2.Length)
 
-    let emit i j v1 v2 =
-        match applyBinary op i j v1 v2 with
-        | Some r -> buf.Add((i, j, r))
-        | None -> ()
-
-    while p1 < a1.Length || p2 < a2.Length do
-        if p1 >= a1.Length then
+    let rec loop p1 p2 outIdx =
+        if p1 >= a1.Length && p2 >= a2.Length then
+            outIdx
+        elif p1 >= a1.Length then
             let (i, j, v2) = a2.[p2]
-            emit i j None (Some v2)
-            p2 <- p2 + 1
+
+            match applyBinary op i j None (Some v2) with
+            | Some r ->
+                target.[outIdx] <- (i, j, r)
+                loop p1 (p2 + 1) (outIdx + 1)
+            | None -> loop p1 (p2 + 1) outIdx
         elif p2 >= a2.Length then
             let (i, j, v1) = a1.[p1]
-            emit i j (Some v1) None
-            p1 <- p1 + 1
+
+            match applyBinary op i j (Some v1) None with
+            | Some r ->
+                target.[outIdx] <- (i, j, r)
+                loop (p1 + 1) p2 (outIdx + 1)
+            | None -> loop (p1 + 1) p2 outIdx
         else
             let (i1, j1, v1) = a1.[p1]
             let (i2, j2, v2) = a2.[p2]
 
             if i1 = i2 && j1 = j2 then
-                emit i1 j1 (Some v1) (Some v2)
-                p1 <- p1 + 1
-                p2 <- p2 + 1
+                match applyBinary op i1 j1 (Some v1) (Some v2) with
+                | Some r ->
+                    target.[outIdx] <- (i1, j1, r)
+                    loop (p1 + 1) (p2 + 1) (outIdx + 1)
+                | None -> loop (p1 + 1) (p2 + 1) outIdx
             elif (i1, j1) < (i2, j2) then
-                emit i1 j1 (Some v1) None
-                p1 <- p1 + 1
+                match applyBinary op i1 j1 (Some v1) None with
+                | Some r ->
+                    target.[outIdx] <- (i1, j1, r)
+                    loop (p1 + 1) p2 (outIdx + 1)
+                | None -> loop (p1 + 1) p2 outIdx
             else
-                emit i2 j2 None (Some v2)
-                p2 <- p2 + 1
+                match applyBinary op i2 j2 None (Some v2) with
+                | Some r ->
+                    target.[outIdx] <- (i2, j2, r)
+                    loop p1 (p2 + 1) (outIdx + 1)
+                | None -> loop p1 (p2 + 1) outIdx
 
-    buf.ToArray()
+    let total = loop 0 0 0
+
+    if total = target.Length then
+        target
+    else
+        Array.sub target 0 total
 
 let private cooMap2Inner
     (coo1: ArrayCOO<'a>)
