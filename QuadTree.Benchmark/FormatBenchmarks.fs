@@ -30,7 +30,7 @@ type FormatBenchmark() =
     [<Params(256, 512, 1024)>]
     member val Size = 0 with get, set
 
-    [<Params(0.01, 0.05, 1.0)>]
+    [<Params(0.01, 0.05)>]
     member val FillRate = 0.0 with get, set
 
     [<GlobalSetup>]
@@ -205,3 +205,160 @@ type FormatBenchmark() =
         match LinearAlgebra.mxm op_add op_mult qtMatrix1 qtMatrix1 with
         | Ok result -> resultQt <- result
         | Error _ -> failwith "mxm failed"
+
+
+[<Config(typeof<QuadTree.Benchmarks.Utils.MyConfig>)>]
+type DenseFormatBenchmark() =
+
+    let mutable cooMatrix = Unchecked.defaultof<ArrayCOO<double>>
+    let mutable qtMatrix = Unchecked.defaultof<SparseMatrix<double>>
+    let mutable listMatrix = Unchecked.defaultof<COOList.ListCOO<double>>
+
+    let mutable resultCoo = Unchecked.defaultof<ArrayCOO<double>>
+    let mutable resultQt = Unchecked.defaultof<SparseMatrix<double>>
+    let mutable resultList = Unchecked.defaultof<COOList.ListCOO<double>>
+    let mutable resultCooVal = 0.0
+    let mutable resultQtVal = 0.0
+    let mutable resultListVal = 0.0
+
+    [<Params(64, 128, 256)>]
+    member val Size = 0 with get, set
+
+    [<GlobalSetup>]
+    member this.Setup() =
+        let rng = Random(42)
+        let size = uint64 this.Size
+
+        let entries =
+            [ for i in 0UL .. size - 1UL do
+                  for j in 0UL .. size - 1UL do
+                      (i * 1UL<rowindex>, j * 1UL<colindex>, rng.NextDouble() * 100.0) ]
+
+        let coo = CoordinateList(size * 1UL<nrows>, size * 1UL<ncols>, entries)
+        cooMatrix <- new ArrayCOO<double>(size * 1UL<nrows>, size * 1UL<ncols>, entries)
+
+        qtMatrix <-
+            match fromCoordinateList coo with
+            | Ok m -> m
+            | Error e -> failwithf "fromCoordinateList: %s" e
+
+        listMatrix <- COOList.fromArray cooMatrix
+
+    [<Benchmark(Baseline = true, Description = "Dense_COO_map")>]
+    member this.DenseCooMap() =
+        resultCoo <- cooMap cooMatrix (fun v -> v |> Option.map (fun x -> x * 2.0))
+
+    [<Benchmark(Description = "Dense_QT_map")>]
+    member this.DenseQtMap() =
+        resultQt <- map qtMatrix (fun v -> v |> Option.map (fun x -> x * 2.0))
+
+    [<Benchmark(Description = "Dense_COO_mapi")>]
+    member this.DenseCooMapi() =
+        resultCoo <- cooMapi cooMatrix (fun i j v -> v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j)))
+
+    [<Benchmark(Description = "Dense_QT_mapi")>]
+    member this.DenseQtMapi() =
+        resultQt <- mapi qtMatrix (fun i j v -> v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j)))
+
+    [<Benchmark(Description = "Dense_COOLIST_map")>]
+    member this.DenseCooListMap() =
+        resultList <- COOList.cooMap listMatrix (fun v -> v |> Option.map (fun x -> x * 2.0))
+
+    [<Benchmark(Description = "Dense_COOLIST_mapi")>]
+    member this.DenseCooListMapi() =
+        resultList <-
+            COOList.cooMapi listMatrix (fun i j v -> v |> Option.map (fun x -> x + float (uint64 i) + float (uint64 j)))
+
+    [<Benchmark(Description = "Dense_COOLIST_mxm")>]
+    member this.DenseCooListMxm() =
+        match COOList.mxmcoo op_add op_mult listMatrix listMatrix with
+        | Ok result -> resultList <- result
+        | Error _ -> failwith "COOList mxmcoo failed"
+
+    [<Benchmark(Description = "Dense_COOLIST_get")>]
+    member this.DenseCooListGet() =
+        let mutable acc = 0.0
+
+        for i in 0UL .. uint64 this.Size - 1UL do
+            for j in 0UL .. uint64 this.Size - 1UL do
+                match COOList.cooGet (listMatrix, i * 1UL<rowindex>, j * 1UL<colindex>) with
+                | Ok(Some v) -> acc <- acc + v
+                | _ -> ()
+
+        resultListVal <- acc
+
+    [<Benchmark(Description = "Dense_COOLIST_set")>]
+    member this.DenseCooListSet() =
+        let mutable m = listMatrix
+        let size = uint64 this.Size
+
+        for i in 0UL .. size - 1UL do
+            for j in 0UL .. size - 1UL do
+                match COOList.cooUpdate (m, i * 1UL<rowindex>, j * 1UL<colindex>, 42.0) with
+                | Ok updated -> m <- updated
+                | _ -> ()
+
+        resultList <- m
+
+    [<Benchmark(Description = "Dense_COO_get")>]
+    member this.DenseCooGet() =
+        let mutable acc = 0.0
+
+        for i in 0UL .. uint64 this.Size - 1UL do
+            for j in 0UL .. uint64 this.Size - 1UL do
+                match cooGet (cooMatrix, i * 1UL<rowindex>, j * 1UL<colindex>) with
+                | Ok(Some v) -> acc <- acc + v
+                | _ -> ()
+
+        resultCoo <- cooMatrix
+
+    [<Benchmark(Description = "Dense_QT_get")>]
+    member this.DenseQtGet() =
+        let mutable acc = 0.0
+
+        for i in 0UL .. uint64 this.Size - 1UL do
+            for j in 0UL .. uint64 this.Size - 1UL do
+                match get qtMatrix (i * 1UL<rowindex>) (j * 1UL<colindex>) with
+                | Ok(Some v) -> acc <- acc + v
+                | _ -> ()
+
+        resultQt <- qtMatrix
+
+    [<Benchmark(Description = "Dense_COO_set")>]
+    member this.DenseCooSet() =
+        let mutable m = cooMatrix
+        let size = uint64 this.Size
+
+        for i in 0UL .. size - 1UL do
+            for j in 0UL .. size - 1UL do
+                match cooUpdate (m, i * 1UL<rowindex>, j * 1UL<colindex>, 42.0) with
+                | Ok updated -> m <- updated
+                | _ -> ()
+
+        resultCoo <- m
+
+    [<Benchmark(Description = "Dense_QT_set")>]
+    member this.DenseQtSet() =
+        let mutable m = qtMatrix
+        let size = uint64 this.Size
+
+        for i in 0UL .. size - 1UL do
+            for j in 0UL .. size - 1UL do
+                match set m (i * 1UL<rowindex>) (j * 1UL<colindex>) 42.0 with
+                | Ok updated -> m <- updated
+                | _ -> ()
+
+        resultQt <- m
+
+    [<Benchmark(Description = "Dense_COO_mxm")>]
+    member this.DenseCooMxm() =
+        match mxmcoo op_add op_mult cooMatrix cooMatrix with
+        | Ok result -> resultCoo <- result
+        | Error _ -> failwith "mxmcoo failed"
+
+    [<Benchmark(Description = "Dense_QT_mxm")>]
+    member this.DenseQtMxm() =
+        match LinearAlgebra.mxm op_add op_mult qtMatrix qtMatrix with
+        | Ok result -> resultQt <- result
+        | Error _ -> failwith "mxm failed"
+
