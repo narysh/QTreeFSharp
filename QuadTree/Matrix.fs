@@ -772,29 +772,23 @@ let foldQuadtree folder state size tree =
 let reduceRows (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'a>) : Vector.SparseVector<'a> =
     let nRows = int matrix.nrows
     let length = uint64 nRows * 1UL<Vector.dataLength>
-
-    let buckets = Array.init nRows (fun _ -> ResizeArray<'a>())
+    let accs = Array.create nRows None
 
     foldQuadtree
-        (fun _ row col v ->
+        (fun _ row _ v ->
             let rowIdx = int row
-            buckets.[rowIdx].Add(v))
+
+            accs.[rowIdx] <-
+                match accs.[rowIdx] with
+                | Some cur -> op (Some cur) (Some v)
+                | None -> Some v)
         ()
         matrix.storage.size
         matrix.storage.data
 
     let vectorData =
-        buckets
-        |> Array.mapi (fun idx bucket ->
-            if bucket.Count = 0 then
-                None
-            else
-                let mutable acc = Some bucket.[0]
-
-                for i in 1 .. bucket.Count - 1 do
-                    acc <- op acc (Some bucket.[i])
-
-                Some(uint64 idx * 1UL<Vector.index>, acc.Value))
+        accs
+        |> Array.mapi (fun idx acc -> acc |> Option.map (fun v -> (uint64 idx * 1UL<Vector.index>, v)))
         |> Array.choose id
         |> Array.toList
 
@@ -805,29 +799,23 @@ let reduceRows (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'
 let reduceCols (op: 'a option -> 'a option -> 'a option) (matrix: SparseMatrix<'a>) : Vector.SparseVector<'a> =
     let nCols = int matrix.ncols
     let length = uint64 nCols * 1UL<Vector.dataLength>
-
-    let buckets = Array.init nCols (fun _ -> ResizeArray<'a>())
+    let accs = Array.create nCols None
 
     foldQuadtree
-        (fun _ row col v ->
+        (fun _ _ col v ->
             let colIdx = int col
-            buckets.[colIdx].Add(v))
+
+            accs.[colIdx] <-
+                match accs.[colIdx] with
+                | Some cur -> op (Some cur) (Some v)
+                | None -> Some v)
         ()
         matrix.storage.size
         matrix.storage.data
 
     let vectorData =
-        buckets
-        |> Array.mapi (fun idx bucket ->
-            if bucket.Count = 0 then
-                None
-            else
-                let mutable acc = Some bucket.[0]
-
-                for i in 1 .. bucket.Count - 1 do
-                    acc <- op acc (Some bucket.[i])
-
-                Some(uint64 idx * 1UL<Vector.index>, acc.Value))
+        accs
+        |> Array.mapi (fun idx acc -> acc |> Option.map (fun v -> (uint64 idx * 1UL<Vector.index>, v)))
         |> Array.choose id
         |> Array.toList
 
@@ -852,36 +840,47 @@ let kroneckerProduct
         * 1UL<storageSize>
 
     let collectEntries (matrix: SparseMatrix<'T>) =
-        let result = ResizeArray<struct (uint64 * uint64 * 'T)>()
         let maxRows = uint64 matrix.nrows
         let maxCols = uint64 matrix.ncols
 
-        let rec traverse (row: uint64) (col: uint64) (size: uint64) (tree: qtree<Option<'T>>) =
+        let rec traverse (row: uint64) (col: uint64) (size: uint64) (tree: qtree<Option<'T>>) acc =
             if row >= maxRows || col >= maxCols then
-                ()
+                acc
             else
                 match tree with
-                | Leaf Dummy -> ()
-                | Leaf(UserValue None) -> ()
+                | Leaf Dummy -> acc
+                | Leaf(UserValue None) -> acc
                 | Leaf(UserValue(Some value)) ->
                     if size = 1UL then
-                        result.Add(struct (row, col, value))
+                        struct (row, col, value) :: acc
                     else
                         let endRow = min (row + size) maxRows
                         let endCol = min (col + size) maxCols
 
-                        for r in row .. endRow - 1UL do
-                            for c in col .. endCol - 1UL do
-                                result.Add(struct (r, c, value))
+                        let rec loopR r curAcc =
+                            if r < endRow then
+                                let rec loopC c cellAcc =
+                                    if c < endCol then
+                                        loopC (c + 1UL) (struct (r, c, value) :: cellAcc)
+                                    else
+                                        cellAcc
+
+                                loopR (r + 1UL) (loopC col curAcc)
+                            else
+                                curAcc
+
+                        loopR row acc
                 | Node(nw, ne, sw, se) ->
                     let half = size / 2UL
-                    traverse row col half nw
-                    traverse row (col + half) half ne
-                    traverse (row + half) col half sw
-                    traverse (row + half) (col + half) half se
 
-        traverse 0UL 0UL (uint64 matrix.storage.size) matrix.storage.data
-        result.ToArray()
+                    acc
+                    |> traverse row col half nw
+                    |> traverse row (col + half) half ne
+                    |> traverse (row + half) col half sw
+                    |> traverse (row + half) (col + half) half se
+
+        traverse 0UL 0UL (uint64 matrix.storage.size) matrix.storage.data []
+        |> List.toArray
 
     let entriesA = collectEntries matrixA
     let entriesB = collectEntries matrixB

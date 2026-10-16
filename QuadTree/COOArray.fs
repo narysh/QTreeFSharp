@@ -22,11 +22,9 @@ type ArrayCOO<'value> =
     val list: COOEntry<'value>[]
 
     static member private SortEntries(list: COOEntry<'value> seq) =
-        list
-        |> Seq.toArray
-        |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
-            let c = compare i1 i2
-            if c <> 0 then c else compare j1 j2)
+        let arr = Seq.toArray list
+        System.Array.Sort(arr, entryComparer<'value>)
+        arr
 
     new(_nrows, _ncols, _list: COOEntry<'value> seq) =
         { nrows = _nrows
@@ -93,24 +91,60 @@ let cooUpdate
 let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b> =
     match op with
     | UnaryOp.ValuesOnly f ->
-        let res =
-            coo.list
-            |> Array.choose (fun (i, j, v) -> f v |> Option.map (fun r -> (i, j, r)))
+        let target = Array.zeroCreate coo.list.Length
 
+        let rec loop inIdx outIdx =
+            if inIdx < coo.list.Length then
+                let (i, j, v) = coo.list.[inIdx]
+
+                match f v with
+                | Some r ->
+                    target.[outIdx] <- (i, j, r)
+                    loop (inIdx + 1) (outIdx + 1)
+                | None -> loop (inIdx + 1) outIdx
+            else
+                outIdx
+
+        let total = loop 0 0
+        let res = if total = target.Length then target else Array.sub target 0 total
         ArrayCOO.Create(coo.nrows, coo.ncols, res)
     | UnaryOp.ValuesOnlyIndexed f ->
-        let res =
-            coo.list
-            |> Array.choose (fun (i, j, v) -> f i j v |> Option.map (fun r -> (i, j, r)))
+        let target = Array.zeroCreate coo.list.Length
 
+        let rec loop inIdx outIdx =
+            if inIdx < coo.list.Length then
+                let (i, j, v) = coo.list.[inIdx]
+
+                match f i j v with
+                | Some r ->
+                    target.[outIdx] <- (i, j, r)
+                    loop (inIdx + 1) (outIdx + 1)
+                | None -> loop (inIdx + 1) outIdx
+            else
+                outIdx
+
+        let total = loop 0 0
+        let res = if total = target.Length then target else Array.sub target 0 total
         ArrayCOO.Create(coo.nrows, coo.ncols, res)
     | UnaryOp.AllCells f ->
         match f None with
         | None ->
-            let res =
-                coo.list
-                |> Array.choose (fun (i, j, v) -> f (Some v) |> Option.map (fun r -> (i, j, r)))
+            let target = Array.zeroCreate coo.list.Length
 
+            let rec loop inIdx outIdx =
+                if inIdx < coo.list.Length then
+                    let (i, j, v) = coo.list.[inIdx]
+
+                    match f (Some v) with
+                    | Some r ->
+                        target.[outIdx] <- (i, j, r)
+                        loop (inIdx + 1) (outIdx + 1)
+                    | None -> loop (inIdx + 1) outIdx
+                else
+                    outIdx
+
+            let total = loop 0 0
+            let res = if total = target.Length then target else Array.sub target 0 total
             ArrayCOO.Create(coo.nrows, coo.ncols, res)
         | Some fnone ->
             let totalCells = int (uint64 coo.nrows * uint64 coo.ncols)
@@ -228,7 +262,7 @@ let private mergeBinary (a1: COOEntry<'a>[]) (a2: COOEntry<'b>[]) (op: BinaryOp<
                     target.[outIdx] <- (i1, j1, r)
                     loop (p1 + 1) (p2 + 1) (outIdx + 1)
                 | None -> loop (p1 + 1) (p2 + 1) outIdx
-            elif (i1, j1) < (i2, j2) then
+            elif i1 < i2 || (i1 = i2 && j1 < j2) then
                 match applyBinary op i1 j1 (Some v1) None with
                 | Some r ->
                     target.[outIdx] <- (i1, j1, r)
@@ -557,11 +591,7 @@ let mxmcoo
                 checkAdd 0
 
             if canMerge then
-                Array.sortInPlaceWith
-                    (fun (i1, j1, _) (i2, j2, _) ->
-                        let c = compare i1 i2
-                        if c <> 0 then c else compare j1 j2)
-                    effectiveProducts
+                System.Array.Sort(effectiveProducts, entryComparer<'c>)
 
                 let target = Array.zeroCreate effectiveProducts.Length
 

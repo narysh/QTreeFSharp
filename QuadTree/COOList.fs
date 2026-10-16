@@ -23,9 +23,15 @@ type ListCOO<'value> =
             match checkBounds (uint64 this.nrows) (uint64 this.ncols) (uint64 rowindex) (uint64 colindex) with
             | Error e -> Error e
             | Ok() ->
-                match this.entries |> List.tryFind (fun (i, j, _) -> i = rowindex && j = colindex) with
-                | Some(_, _, value) -> Ok(Some value)
-                | None -> Ok None
+                let rec findEntry list =
+                    match list with
+                    | [] -> None
+                    | (i, j, v) :: tail ->
+                        if i = rowindex && j = colindex then Some v
+                        elif i > rowindex || (i = rowindex && j > colindex) then None
+                        else findEntry tail
+
+                Ok(findEntry this.entries)
 
 let cooGet (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>) : Result<option<'a>, Error> =
     coo.[rowindex, colindex]
@@ -76,48 +82,68 @@ let private cooMapInner (coo: ListCOO<'a>) (op: UnaryOp<'a, 'b>) : ListCOO<'b> =
                 coo.entries
                 |> List.choose (fun (i, j, v) -> f (Some v) |> Option.map (fun r -> (i, j, r)))
             | Some fnone ->
-                let mutable rest = coo.entries
+                let rec loopRow i curRest acc =
+                    if i < uint64 coo.nrows then
+                        let ri = i * 1UL<rowindex>
 
-                [ for i in range (uint64 coo.nrows) do
-                      let ri = i * 1UL<rowindex>
+                        let rec loopCol j r acc' =
+                            if j < uint64 coo.ncols then
+                                let cj = j * 1UL<colindex>
 
-                      for j in range (uint64 coo.ncols) do
-                          let cj = j * 1UL<colindex>
+                                let v, nextR =
+                                    match r with
+                                    | (ei, ej, ev) :: tail when ei = ri && ej = cj -> Some ev, tail
+                                    | _ -> None, r
 
-                          let value =
-                              match rest with
-                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                  rest <- tail
-                                  Some ev
-                              | _ -> None
+                                let res =
+                                    match v with
+                                    | Some value -> f (Some value)
+                                    | None -> Some fnone
 
-                          let res =
-                              match value with
-                              | Some v -> f (Some v)
-                              | None -> Some fnone
+                                let acc'' =
+                                    match res with
+                                    | Some value -> (ri, cj, value) :: acc'
+                                    | None -> acc'
 
-                          match res with
-                          | Some value -> yield (ri, cj, value)
-                          | None -> () ]
+                                loopCol (j + 1UL) nextR acc''
+                            else
+                                r, acc'
+
+                        let nextR, nextAcc = loopCol 0UL curRest acc
+                        loopRow (i + 1UL) nextR nextAcc
+                    else
+                        List.rev acc
+
+                loopRow 0UL coo.entries []
         | UnaryOp.AllCellsIndexed f ->
-            let mutable rest = coo.entries
+            let rec loopRow i curRest acc =
+                if i < uint64 coo.nrows then
+                    let ri = i * 1UL<rowindex>
 
-            [ for i in range (uint64 coo.nrows) do
-                  let ri = i * 1UL<rowindex>
+                    let rec loopCol j r acc' =
+                        if j < uint64 coo.ncols then
+                            let cj = j * 1UL<colindex>
 
-                  for j in range (uint64 coo.ncols) do
-                      let cj = j * 1UL<colindex>
+                            let v, nextR =
+                                match r with
+                                | (ei, ej, ev) :: tail when ei = ri && ej = cj -> Some ev, tail
+                                | _ -> None, r
 
-                      let value =
-                          match rest with
-                          | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                              rest <- tail
-                              Some ev
-                          | _ -> None
+                            let acc'' =
+                                match f ri cj v with
+                                | Some value -> (ri, cj, value) :: acc'
+                                | None -> acc'
 
-                      match f ri cj value with
-                      | Some value -> yield (ri, cj, value)
-                      | None -> () ]
+                            loopCol (j + 1UL) nextR acc''
+                        else
+                            r, acc'
+
+                    let nextR, nextAcc = loopCol 0UL curRest acc
+                    loopRow (i + 1UL) nextR nextAcc
+                else
+                    List.rev acc
+
+            loopRow 0UL coo.entries []
 
     ListCOO<'b>(coo.nrows, coo.ncols, result)
 
@@ -147,7 +173,7 @@ let private mergeBinary (l1: COOEntry<'a> list) (l2: COOEntry<'b> list) (op: Bin
                     | None -> acc
 
                 loop acc' t1 t2
-            elif (i1, j1) < (i2, j2) then
+            elif i1 < i2 || (i1 = i2 && j1 < j2) then
                 let acc' =
                     match applyBinary op i1 j1 (Some v1) None with
                     | Some r -> (i1, j1, r) :: acc
@@ -181,59 +207,73 @@ let private cooMap2Inner
                 match f None None with
                 | None -> mergeBinary coo1.entries coo2.entries op
                 | Some _ ->
-                    let mutable rest1 = coo1.entries
-                    let mutable rest2 = coo2.entries
+                    let rec loopRow i curRest1 curRest2 acc =
+                        if i < uint64 nrows then
+                            let ri = i * 1UL<rowindex>
 
-                    [ for i in range (uint64 nrows) do
-                          let ri = i * 1UL<rowindex>
+                            let rec loopCol j r1 r2 acc' =
+                                if j < uint64 ncols then
+                                    let cj = j * 1UL<colindex>
 
-                          for j in range (uint64 ncols) do
-                              let cj = j * 1UL<colindex>
+                                    let v1, nextR1 =
+                                        match r1 with
+                                        | (ei, ej, ev) :: tail when ei = ri && ej = cj -> Some ev, tail
+                                        | _ -> None, r1
 
-                              let v1 =
-                                  match rest1 with
-                                  | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                      rest1 <- tail
-                                      Some ev
-                                  | _ -> None
+                                    let v2, nextR2 =
+                                        match r2 with
+                                        | (ei, ej, ev) :: tail when ei = ri && ej = cj -> Some ev, tail
+                                        | _ -> None, r2
 
-                              let v2 =
-                                  match rest2 with
-                                  | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                      rest2 <- tail
-                                      Some ev
-                                  | _ -> None
+                                    let acc'' =
+                                        match f v1 v2 with
+                                        | Some value -> (ri, cj, value) :: acc'
+                                        | None -> acc'
 
-                              match f v1 v2 with
-                              | Some value -> yield (ri, cj, value)
-                              | None -> () ]
+                                    loopCol (j + 1UL) nextR1 nextR2 acc''
+                                else
+                                    r1, r2, acc'
+
+                            let nextR1, nextR2, nextAcc = loopCol 0UL curRest1 curRest2 acc
+                            loopRow (i + 1UL) nextR1 nextR2 nextAcc
+                        else
+                            List.rev acc
+
+                    loopRow 0UL coo1.entries coo2.entries []
             | BinaryOp.AllCellsIndexed f ->
-                let mutable rest1 = coo1.entries
-                let mutable rest2 = coo2.entries
+                let rec loopRow i curRest1 curRest2 acc =
+                    if i < uint64 nrows then
+                        let ri = i * 1UL<rowindex>
 
-                [ for i in range (uint64 nrows) do
-                      let ri = i * 1UL<rowindex>
+                        let rec loopCol j r1 r2 acc' =
+                            if j < uint64 ncols then
+                                let cj = j * 1UL<colindex>
 
-                      for j in range (uint64 ncols) do
-                          let cj = j * 1UL<colindex>
+                                let v1, nextR1 =
+                                    match r1 with
+                                    | (ei, ej, ev) :: tail when ei = ri && ej = cj -> Some ev, tail
+                                    | _ -> None, r1
 
-                          let v1 =
-                              match rest1 with
-                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                  rest1 <- tail
-                                  Some ev
-                              | _ -> None
+                                let v2, nextR2 =
+                                    match r2 with
+                                    | (ei, ej, ev) :: tail when ei = ri && ej = cj -> Some ev, tail
+                                    | _ -> None, r2
 
-                          let v2 =
-                              match rest2 with
-                              | (ei, ej, ev) :: tail when ei = ri && ej = cj ->
-                                  rest2 <- tail
-                                  Some ev
-                              | _ -> None
+                                let acc'' =
+                                    match f ri cj v1 v2 with
+                                    | Some value -> (ri, cj, value) :: acc'
+                                    | None -> acc'
 
-                          match f ri cj v1 v2 with
-                          | Some value -> yield (ri, cj, value)
-                          | None -> () ]
+                                loopCol (j + 1UL) nextR1 nextR2 acc''
+                            else
+                                r1, r2, acc'
+
+                        let nextR1, nextR2, nextAcc = loopCol 0UL curRest1 curRest2 acc
+                        loopRow (i + 1UL) nextR1 nextR2 nextAcc
+                    else
+                        List.rev acc
+
+                loopRow 0UL coo1.entries coo2.entries []
             | _ -> mergeBinary coo1.entries coo2.entries op
 
         ListCOO<'c>(nrows, ncols, result) |> Ok
@@ -290,78 +330,129 @@ let mxmcoo
         let entries1 = m1.entries
         let entries2 = m2.entries
 
-        let valuesOf (entries: (uint64<rowindex> * uint64<colindex> * 'v) list) =
-            entries |> List.map (fun (_, _, v) -> v) |> List.distinct
+        let checkMultCondition entries getL getR =
+            let rec loop list =
+                match list with
+                | [] -> true
+                | (_, _, v) :: tail ->
+                    if op_mult (getL v) (getR v) = None then loop tail else false
+            loop entries
 
         let canOptimize =
-            let noneNone = op_mult None None = None
-
-            let multSomeNone =
-                valuesOf entries1 |> List.forall (fun v -> op_mult (Some v) None = None)
-
-            let multNoneSome =
-                valuesOf entries2 |> List.forall (fun v -> op_mult None (Some v) = None)
-
-            noneNone && multSomeNone && multNoneSome
+            op_mult None None = None
+            && checkMultCondition entries1 (fun v -> Some v) (fun _ -> None)
+            && checkMultCondition entries2 (fun _ -> None) (fun v -> Some v)
 
         let generalResult () =
             let m1Map = entries1 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
             let m2Map = entries2 |> List.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofList
             let kCount = uint64 m1.ncols
 
-            let result =
-                [ for i in range (uint64 m1.nrows) do
-                      let ri = i * 1UL<rowindex>
+            let rec loopRow i acc =
+                if i < uint64 m1.nrows then
+                    let ri = i * 1UL<rowindex>
 
-                      for j in range (uint64 m2.ncols) do
-                          let cj = j * 1UL<colindex>
+                    let rec loopCol j colAcc =
+                        if j < uint64 m2.ncols then
+                            let cj = j * 1UL<colindex>
 
-                          let products =
-                              [ for k in range kCount do
+                            let rec loopK k kAcc =
+                                if k < kCount then
                                     let a = m1Map |> Map.tryFind (ri, k * 1UL<colindex>)
                                     let b = m2Map |> Map.tryFind (k * 1UL<rowindex>, cj)
-                                    yield op_mult a b ]
+                                    loopK (k + 1UL) (op_add kAcc (op_mult a b))
+                                else
+                                    kAcc
 
-                          let sum = products |> List.fold (fun acc p -> op_add acc p) None
+                            let sum = loopK 0UL None
 
-                          match sum with
-                          | Some value -> yield (ri, cj, value)
-                          | None -> () ]
+                            let colAcc' =
+                                match sum with
+                                | Some value -> (ri, cj, value) :: colAcc
+                                | None -> colAcc
 
+                            loopCol (j + 1UL) colAcc'
+                        else
+                            colAcc
+
+                    let rowAcc = loopCol 0UL acc
+                    loopRow (i + 1UL) rowAcc
+                else
+                    List.rev acc
+
+            let result = loopRow 0UL []
             ListCOO<'c>(m1.nrows, m2.ncols, result)
 
         if canOptimize then
             let m1ByRow = entries1 |> List.groupBy (fun (i, _, _) -> i) |> Map.ofList
             let m2ByRow = entries2 |> List.groupBy (fun (k, _, _) -> k) |> Map.ofList
 
-            let result =
-                [ for KeyValue(i, m1Entries) in m1ByRow do
-                      for (_, k, v1) in m1Entries do
-                          let kAsRow = uint64 k * 1UL<rowindex>
+            let rec emitProducts m1List acc =
+                match m1List with
+                | [] -> acc
+                | (i, k, v1) :: tail ->
+                    let kAsRow = uint64 k * 1UL<rowindex>
 
-                          match m2ByRow |> Map.tryFind kAsRow with
-                          | Some m2Entries ->
-                              for (_, j, v2) in m2Entries do
-                                  match op_mult (Some v1) (Some v2) with
-                                  | Some product -> yield (i, j, product)
-                                  | None -> ()
-                          | None -> () ]
+                    let acc' =
+                        match m2ByRow |> Map.tryFind kAsRow with
+                        | Some m2Entries ->
+                            let rec loopM2 m2List curAcc =
+                                match m2List with
+                                | [] -> curAcc
+                                | (_, j, v2) :: m2Tail ->
+                                    match op_mult (Some v1) (Some v2) with
+                                    | Some product -> loopM2 m2Tail ((i, j, product) :: curAcc)
+                                    | None -> loopM2 m2Tail curAcc
 
-            let canMerge =
-                let productValues = result |> List.map (fun (_, _, v) -> v) |> List.distinct
+                            loopM2 m2Entries acc
+                        | None -> acc
 
-                productValues
-                |> List.forall (fun v -> op_add (Some v) None = Some v && op_add None (Some v) = Some v)
+                    emitProducts tail acc'
+
+            let result = emitProducts entries1 []
+
+            let checkAddCondition list =
+                let rec loop l =
+                    match l with
+                    | [] -> true
+                    | (_, _, v) :: tail ->
+                        if op_add (Some v) None = Some v && op_add None (Some v) = Some v then
+                            loop tail
+                        else
+                            false
+
+                loop list
+
+            let canMerge = checkAddCondition result
 
             if canMerge then
-                let grouped =
+                let sorted =
                     result
-                    |> List.groupBy (fun (i, j, _) -> (i, j))
-                    |> List.map (fun ((i, j), entries) ->
-                        let sum = entries |> List.map (fun (_, _, v) -> Some v) |> List.reduce op_add
-                        (i, j, sum))
-                    |> List.choose (fun (i, j, v) -> v |> Option.map (fun v -> (i, j, v)))
-                    |> List.sortBy (fun (i, j, _) -> (i, j))
+                    |> List.sortWith (fun (i1, j1, _) (i2, j2, _) ->
+                        let c = compare i1 i2
+                        if c <> 0 then c else compare j1 j2)
+
+                let rec reduceAdjacent acc curKey curSum rest =
+                    match rest with
+                    | [] ->
+                        match curSum with
+                        | Some v -> List.rev ((fst curKey, snd curKey, v) :: acc)
+                        | None -> List.rev acc
+                    | (i, j, v) :: tail ->
+                        if (i, j) = curKey then
+                            reduceAdjacent acc curKey (op_add curSum (Some v)) tail
+                        else
+                            let acc' =
+                                match curSum with
+                                | Some sv -> (fst curKey, snd curKey, sv) :: acc
+                                | None -> acc
+
+                            reduceAdjacent acc' (i, j) (Some v) tail
+
+                let grouped =
+                    match sorted with
+                    | [] -> []
+                    | (i, j, v) :: tail -> reduceAdjacent [] (i, j) (Some v) tail
 
                 ListCOO<'c>(m1.nrows, m2.ncols, grouped) |> Ok
             else
