@@ -37,10 +37,10 @@ let cooGet (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colin
     coo.[rowindex, colindex]
 
 let fromArray (coo: ArrayCOO<'a>) : ListCOO<'a> =
-    ListCOO<'a>(coo.nrows, coo.ncols, Array.toList coo.list)
+    ListCOO<'a>(coo.nrows, coo.ncols, Array.toList coo.entries)
 
 let toArray (coo: ListCOO<'a>) : ArrayCOO<'a> =
-    ArrayCOO.Create(coo.nrows, coo.ncols, Array.ofList coo.entries)
+    ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, Array.ofList coo.entries)
 
 let cooUpdate
     (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colindex>, value: 'a)
