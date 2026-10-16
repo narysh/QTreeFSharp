@@ -42,33 +42,24 @@ let cooUpdate
     match checkBounds (uint64 coo.nrows) (uint64 coo.ncols) (uint64 rowindex) (uint64 colindex) with
     | Error e -> Error e
     | Ok() ->
-        let mutable acc = []
-        let mutable rest = coo.entries
-        let mutable inserted = false
+        let rec loop rest acc inserted =
+            match rest with
+            | [] ->
+                if inserted then
+                    List.rev acc
+                else
+                    List.rev ((rowindex, colindex, value) :: acc)
+            | (i, j, v) :: tail ->
+                if inserted then
+                    loop tail ((i, j, v) :: acc) true
+                elif i = rowindex && j = colindex then
+                    loop tail ((rowindex, colindex, value) :: acc) true
+                elif rowindex < i || (rowindex = i && colindex < j) then
+                    loop rest ((rowindex, colindex, value) :: acc) true
+                else
+                    loop tail ((i, j, v) :: acc) false
 
-        while rest <> [] && not inserted do
-            let (i, j, v) = rest.Head
-
-            if i = rowindex && j = colindex then
-                acc <- (rowindex, colindex, value) :: acc
-                rest <- rest.Tail
-                inserted <- true
-            elif rowindex < i || (rowindex = i && colindex < j) then
-                acc <- (rowindex, colindex, value) :: acc
-                inserted <- true
-            else
-                acc <- (i, j, v) :: acc
-                rest <- rest.Tail
-
-        if not inserted then
-            acc <- (rowindex, colindex, value) :: acc
-
-        while rest <> [] do
-            let entry = rest.Head
-            acc <- entry :: acc
-            rest <- rest.Tail
-
-        Ok(ListCOO<'a>(coo.nrows, coo.ncols, List.rev acc))
+        Ok(ListCOO<'a>(coo.nrows, coo.ncols, loop coo.entries [] false))
 
 let private cooMapInner (coo: ListCOO<'a>) (op: UnaryOp<'a, 'b>) : ListCOO<'b> =
     let result =

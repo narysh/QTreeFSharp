@@ -13,23 +13,7 @@ let private entryComparer<'v> =
     { new System.Collections.Generic.IComparer<COOEntry<'v>> with
         member _.Compare(e1, e2) = compareEntriesByRowCol e1 e2 }
 
-let private iterCells
-    (nrows: uint64<nrows>)
-    (ncols: uint64<ncols>)
-    (action: uint64<rowindex> -> uint64<colindex> -> unit)
-    =
-    let mutable i = 0UL
 
-    while i < uint64 nrows do
-        let ri = i * 1UL<rowindex>
-        let mutable j = 0UL
-
-        while j < uint64 ncols do
-            let cj = j * 1UL<colindex>
-            action ri cj
-            j <- j + 1UL
-
-        i <- i + 1UL
 
 [<Struct>]
 type ArrayCOO<'value> =
@@ -129,48 +113,88 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
 
             ArrayCOO.Create(coo.nrows, coo.ncols, res)
         | Some fnone ->
-            let buf = ResizeArray<COOEntry<'b>>()
-            let mutable ptr = 0
+            let totalCells = int (uint64 coo.nrows * uint64 coo.ncols)
+            let target = Array.zeroCreate totalCells
 
-            iterCells coo.nrows coo.ncols (fun ri cj ->
-                let v =
-                    if ptr < coo.list.Length then
-                        let (ei, ej, ev) = coo.list.[ptr]
+            let rec loopRow i ptr outIdx =
+                if i < uint64 coo.nrows then
+                    let ri = i * 1UL<rowindex>
 
-                        if ei = ri && ej = cj then
-                            ptr <- ptr + 1
-                            Some ev
+                    let rec loopCol j curPtr curOut =
+                        if j < uint64 coo.ncols then
+                            let cj = j * 1UL<colindex>
+
+                            let v, nextPtr =
+                                if curPtr < coo.list.Length then
+                                    let (ei, ej, ev) = coo.list.[curPtr]
+
+                                    if ei = ri && ej = cj then
+                                        Some ev, curPtr + 1
+                                    else
+                                        None, curPtr
+                                else
+                                    None, curPtr
+
+                            let resVal =
+                                match v with
+                                | Some value -> f (Some value)
+                                | None -> Some fnone
+
+                            match resVal with
+                            | Some r ->
+                                target.[curOut] <- (ri, cj, r)
+                                loopCol (j + 1UL) nextPtr (curOut + 1)
+                            | None -> loopCol (j + 1UL) nextPtr curOut
                         else
-                            None
-                    else
-                        None
+                            curPtr, curOut
 
-                match v with
-                | Some value -> f (Some value)
-                | None -> Some fnone
-                |> Option.iter (fun value -> buf.Add((ri, cj, value))))
-
-            ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
-    | UnaryOp.AllCellsIndexed f ->
-        let buf = ResizeArray<COOEntry<'b>>()
-        let mutable ptr = 0
-
-        iterCells coo.nrows coo.ncols (fun ri cj ->
-            let v =
-                if ptr < coo.list.Length then
-                    let (ei, ej, ev) = coo.list.[ptr]
-
-                    if ei = ri && ej = cj then
-                        ptr <- ptr + 1
-                        Some ev
-                    else
-                        None
+                    let nextPtr, nextOut = loopCol 0UL ptr outIdx
+                    loopRow (i + 1UL) nextPtr nextOut
                 else
-                    None
+                    outIdx
 
-            f ri cj v |> Option.iter (fun value -> buf.Add((ri, cj, value))))
+            let total = loopRow 0UL 0 0
+            let finalArr = if total = target.Length then target else Array.sub target 0 total
+            ArrayCOO.Create(coo.nrows, coo.ncols, finalArr)
+    | UnaryOp.AllCellsIndexed f ->
+        let totalCells = int (uint64 coo.nrows * uint64 coo.ncols)
+        let target = Array.zeroCreate totalCells
 
-        ArrayCOO.Create(coo.nrows, coo.ncols, buf.ToArray())
+        let rec loopRow i ptr outIdx =
+            if i < uint64 coo.nrows then
+                let ri = i * 1UL<rowindex>
+
+                let rec loopCol j curPtr curOut =
+                    if j < uint64 coo.ncols then
+                        let cj = j * 1UL<colindex>
+
+                        let v, nextPtr =
+                            if curPtr < coo.list.Length then
+                                let (ei, ej, ev) = coo.list.[curPtr]
+
+                                if ei = ri && ej = cj then
+                                    Some ev, curPtr + 1
+                                else
+                                    None, curPtr
+                            else
+                                None, curPtr
+
+                        match f ri cj v with
+                        | Some r ->
+                            target.[curOut] <- (ri, cj, r)
+                            loopCol (j + 1UL) nextPtr (curOut + 1)
+                        | None -> loopCol (j + 1UL) nextPtr curOut
+                    else
+                        curPtr, curOut
+
+                let nextPtr, nextOut = loopCol 0UL ptr outIdx
+                loopRow (i + 1UL) nextPtr nextOut
+            else
+                outIdx
+
+        let total = loopRow 0UL 0 0
+        let finalArr = if total = target.Length then target else Array.sub target 0 total
+        ArrayCOO.Create(coo.nrows, coo.ncols, finalArr)
 
 let private mergeBinary (a1: COOEntry<'a>[]) (a2: COOEntry<'b>[]) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c>[] =
     let target = Array.zeroCreate (a1.Length + a2.Length)
@@ -241,73 +265,103 @@ let private cooMap2Inner
                 match f None None with
                 | None -> mergeBinary coo1.list coo2.list op
                 | Some _ ->
-                    let buf = ResizeArray<COOEntry<'c>>()
-                    let mutable p1 = 0
-                    let mutable p2 = 0
+                    let totalCells = int (uint64 nrows * uint64 ncols)
+                    let target = Array.zeroCreate totalCells
 
-                    iterCells nrows ncols (fun ri cj ->
-                        let v1 =
-                            if p1 < coo1.list.Length then
-                                let (ei, ej, ev) = coo1.list.[p1]
+                    let rec loopRow i p1 p2 outIdx =
+                        if i < uint64 nrows then
+                            let ri = i * 1UL<rowindex>
 
-                                if ei = ri && ej = cj then
-                                    p1 <- p1 + 1
-                                    Some ev
+                            let rec loopCol j curP1 curP2 curOut =
+                                if j < uint64 ncols then
+                                    let cj = j * 1UL<colindex>
+
+                                    let v1, nextP1 =
+                                        if curP1 < coo1.list.Length then
+                                            let (ei, ej, ev) = coo1.list.[curP1]
+
+                                            if ei = ri && ej = cj then
+                                                Some ev, curP1 + 1
+                                            else
+                                                None, curP1
+                                        else
+                                            None, curP1
+
+                                    let v2, nextP2 =
+                                        if curP2 < coo2.list.Length then
+                                            let (ei, ej, ev) = coo2.list.[curP2]
+
+                                            if ei = ri && ej = cj then
+                                                Some ev, curP2 + 1
+                                            else
+                                                None, curP2
+                                        else
+                                            None, curP2
+
+                                    match f v1 v2 with
+                                    | Some r ->
+                                        target.[curOut] <- (ri, cj, r)
+                                        loopCol (j + 1UL) nextP1 nextP2 (curOut + 1)
+                                    | None -> loopCol (j + 1UL) nextP1 nextP2 curOut
                                 else
-                                    None
-                            else
-                                None
+                                    curP1, curP2, curOut
 
-                        let v2 =
-                            if p2 < coo2.list.Length then
-                                let (ei, ej, ev) = coo2.list.[p2]
+                            let nextP1, nextP2, nextOut = loopCol 0UL p1 p2 outIdx
+                            loopRow (i + 1UL) nextP1 nextP2 nextOut
+                        else
+                            outIdx
 
-                                if ei = ri && ej = cj then
-                                    p2 <- p2 + 1
-                                    Some ev
-                                else
-                                    None
-                            else
-                                None
-
-                        match f v1 v2 with
-                        | Some value -> buf.Add((ri, cj, value))
-                        | None -> ())
-
-                    buf.ToArray()
+                    let total = loopRow 0UL 0 0 0
+                    if total = target.Length then target else Array.sub target 0 total
             | BinaryOp.AllCellsIndexed f ->
-                let buf = ResizeArray<COOEntry<'c>>()
-                let mutable p1 = 0
-                let mutable p2 = 0
+                let totalCells = int (uint64 nrows * uint64 ncols)
+                let target = Array.zeroCreate totalCells
 
-                iterCells nrows ncols (fun ri cj ->
-                    let v1 =
-                        if p1 < coo1.list.Length then
-                            let (ei, ej, ev) = coo1.list.[p1]
+                let rec loopRow i p1 p2 outIdx =
+                    if i < uint64 nrows then
+                        let ri = i * 1UL<rowindex>
 
-                            if ei = ri && ej = cj then
-                                p1 <- p1 + 1
-                                Some ev
+                        let rec loopCol j curP1 curP2 curOut =
+                            if j < uint64 ncols then
+                                let cj = j * 1UL<colindex>
+
+                                let v1, nextP1 =
+                                    if curP1 < coo1.list.Length then
+                                        let (ei, ej, ev) = coo1.list.[curP1]
+
+                                        if ei = ri && ej = cj then
+                                            Some ev, curP1 + 1
+                                        else
+                                            None, curP1
+                                    else
+                                        None, curP1
+
+                                let v2, nextP2 =
+                                    if curP2 < coo2.list.Length then
+                                        let (ei, ej, ev) = coo2.list.[curP2]
+
+                                        if ei = ri && ej = cj then
+                                            Some ev, curP2 + 1
+                                        else
+                                            None, curP2
+                                    else
+                                        None, curP2
+
+                                match f ri cj v1 v2 with
+                                | Some r ->
+                                    target.[curOut] <- (ri, cj, r)
+                                    loopCol (j + 1UL) nextP1 nextP2 (curOut + 1)
+                                | None -> loopCol (j + 1UL) nextP1 nextP2 curOut
                             else
-                                None
-                        else
-                            None
+                                curP1, curP2, curOut
 
-                    let v2 =
-                        if p2 < coo2.list.Length then
-                            let (ei, ej, ev) = coo2.list.[p2]
+                        let nextP1, nextP2, nextOut = loopCol 0UL p1 p2 outIdx
+                        loopRow (i + 1UL) nextP1 nextP2 nextOut
+                    else
+                        outIdx
 
-                            if ei = ri && ej = cj then
-                                p2 <- p2 + 1
-                                Some ev
-                            else
-                                None
-                        else
-                            None
-
-                    f ri cj v1 v2 |> Option.iter (fun value -> buf.Add((ri, cj, value))))
-
-                buf.ToArray()
+                let total = loopRow 0UL 0 0 0
+                if total = target.Length then target else Array.sub target 0 total
             | _ -> mergeBinary coo1.list coo2.list op
 
         ArrayCOO.Create(nrows, ncols, result) |> Ok
@@ -357,169 +411,194 @@ let mxmcoo
     (op_mult: 'a option -> 'b option -> 'c option)
     (m1: ArrayCOO<'a>)
     (m2: ArrayCOO<'b>)
-    =
+    : Result<ArrayCOO<'c>, Error> =
     if uint64 m1.ncols <> uint64 m2.nrows then
         Error Error.InconsistentSizeOfArguments
     else
-        let valuesOf (arr: COOEntry<'v>[]) =
-            arr |> Array.map (fun (_, _, v) -> v) |> Array.distinct
+        let checkMultCondition (arr: COOEntry<'v>[]) getL getR =
+            let rec loop i =
+                if i < arr.Length then
+                    let (_, _, v) = arr.[i]
+                    if op_mult (getL v) (getR v) = None then
+                        loop (i + 1)
+                    else
+                        false
+                else
+                    true
+            loop 0
 
         let canOptimize =
-            let noneNone = op_mult None None = None
-
-            let multSomeNone =
-                valuesOf m1.list |> Array.forall (fun v -> op_mult (Some v) None = None)
-
-            let multNoneSome =
-                valuesOf m2.list |> Array.forall (fun v -> op_mult None (Some v) = None)
-
-            noneNone && multSomeNone && multNoneSome
+            op_mult None None = None
+            && checkMultCondition m1.list (fun v -> Some v) (fun _ -> None)
+            && checkMultCondition m2.list (fun _ -> None) (fun v -> Some v)
 
         let generalResult () =
             let m1Map =
-                let mutable m = Map.empty
-
-                for (i, j, v) in m1.list do
-                    m <- Map.add (i, j) v m
-
-                m
+                m1.list |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
 
             let m2Map =
-                let mutable m = Map.empty
-
-                for (i, j, v) in m2.list do
-                    m <- Map.add (i, j) v m
-
-                m
+                m2.list |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
 
             let kCount = uint64 m1.ncols
-            let result = ResizeArray<COOEntry<'c>>()
+            let totalCells = int (uint64 m1.nrows * uint64 m2.ncols)
+            let result = Array.zeroCreate totalCells
 
-            iterCells m1.nrows m2.ncols (fun ri cj ->
-                let mutable acc = None
-                let mutable k = 0UL
+            let rec loopRow i outIdx =
+                if i < uint64 m1.nrows then
+                    let ri = i * 1UL<rowindex>
 
-                while k < kCount do
-                    let key1 = (ri, k * 1UL<colindex>)
-                    let key2 = (k * 1UL<rowindex>, cj)
-                    acc <- op_add acc (op_mult (Map.tryFind key1 m1Map) (Map.tryFind key2 m2Map))
-                    k <- k + 1UL
+                    let rec loopCol j curOut =
+                        if j < uint64 m2.ncols then
+                            let cj = j * 1UL<colindex>
 
-                match acc with
-                | Some value -> result.Add((ri, cj, value))
-                | None -> ())
+                            let rec loopK k acc =
+                                if k < kCount then
+                                    let key1 = (ri, k * 1UL<colindex>)
+                                    let key2 = (k * 1UL<rowindex>, cj)
+                                    let acc' = op_add acc (op_mult (Map.tryFind key1 m1Map) (Map.tryFind key2 m2Map))
+                                    loopK (k + 1UL) acc'
+                                else
+                                    acc
 
-            ArrayCOO.Create(m1.nrows, m2.ncols, result.ToArray())
+                            match loopK 0UL None with
+                            | Some value ->
+                                result.[curOut] <- (ri, cj, value)
+                                loopCol (j + 1UL) (curOut + 1)
+                            | None -> loopCol (j + 1UL) curOut
+                        else
+                            curOut
+
+                    let nextOut = loopCol 0UL outIdx
+                    loopRow (i + 1UL) nextOut
+                else
+                    outIdx
+
+            let total = loopRow 0UL 0
+            let finalArr = if total = result.Length then result else Array.sub result 0 total
+            ArrayCOO.Create(m1.nrows, m2.ncols, finalArr)
 
         if canOptimize then
-            let rowStarts2 = ResizeArray<uint64<rowindex>>()
-            let rowBegins2 = ResizeArray<int>()
-            let rowEnds2 = ResizeArray<int>()
-            let mutable idx = 0
+            let n1 = m1.list.Length
+            let n2 = m2.list.Length
+            let numRows = int (uint64 m2.nrows)
 
-            while idx < m2.list.Length do
-                let (r, _, _) = m2.list.[idx]
-                let beginIdx = idx
-                let mutable advance = true
+            let rowOffsets2 = Array.zeroCreate (numRows + 1)
 
-                while idx < m2.list.Length && advance do
-                    let (r', _, _) = m2.list.[idx]
+            let rec countOffsets2 idx =
+                if idx < n2 then
+                    let (r, _, _) = m2.list.[idx]
+                    let rInt = int (uint64 r)
+                    rowOffsets2.[rInt + 1] <- rowOffsets2.[rInt + 1] + 1
+                    countOffsets2 (idx + 1)
 
-                    if r' = r then idx <- idx + 1 else advance <- false
+            countOffsets2 0
 
-                rowStarts2.Add(r)
-                rowBegins2.Add(beginIdx)
-                rowEnds2.Add(idx)
+            let rec prefixSum r =
+                if r <= numRows then
+                    rowOffsets2.[r] <- rowOffsets2.[r] + rowOffsets2.[r - 1]
+                    prefixSum (r + 1)
 
-            let findRowSegments (k: uint64<rowindex>) =
-                let mutable lo = 0
-                let mutable hi = rowStarts2.Count - 1
-                let mutable foundMid = -1
+            prefixSum 1
 
-                while lo <= hi && foundMid < 0 do
-                    let mid = (lo + hi) / 2
-
-                    if rowStarts2.[mid] = k then foundMid <- mid
-                    elif rowStarts2.[mid] < k then lo <- mid + 1
-                    else hi <- mid - 1
-
-                if foundMid >= 0 then
-                    Some(rowBegins2.[foundMid], rowEnds2.[foundMid])
+            let rec countPairs idx acc =
+                if idx < n1 then
+                    let (_, k, _) = m1.list.[idx]
+                    let kInt = int (uint64 k)
+                    let count = rowOffsets2.[kInt + 1] - rowOffsets2.[kInt]
+                    countPairs (idx + 1) (acc + count)
                 else
-                    None
+                    acc
 
-            let products = ResizeArray<COOEntry<'c>>()
-            let mutable baseIdx = 0
+            let totalPairs = countPairs 0 0
+            let products = Array.zeroCreate totalPairs
 
-            while baseIdx < m1.list.Length do
-                let (row, _, _) = m1.list.[baseIdx]
-                let mutable nextIdx = baseIdx + 1
-                let mutable advance = true
+            let rec emitProducts idx writePos =
+                if idx < n1 then
+                    let (i, k, v1) = m1.list.[idx]
+                    let kInt = int (uint64 k)
+                    let b = rowOffsets2.[kInt]
+                    let e = rowOffsets2.[kInt + 1]
 
-                while nextIdx < m1.list.Length && advance do
-                    let (row', _, _) = m1.list.[nextIdx]
-
-                    if row' = row then
-                        nextIdx <- nextIdx + 1
-                    else
-                        advance <- false
-
-                for e in baseIdx .. nextIdx - 1 do
-                    let (_, k, v1) = m1.list.[e]
-                    let kAsRow = uint64 k * 1UL<rowindex>
-
-                    match findRowSegments kAsRow with
-                    | Some(beginIdx, endIdx) ->
-                        for q in beginIdx .. endIdx - 1 do
+                    let rec loopQ q curWrite =
+                        if q < e then
                             let (_, j, v2) = m2.list.[q]
 
                             match op_mult (Some v1) (Some v2) with
-                            | Some product -> products.Add((row, j, product))
-                            | None -> ()
-                    | None -> ()
+                            | Some prod ->
+                                products.[curWrite] <- (i, j, prod)
+                                loopQ (q + 1) (curWrite + 1)
+                            | None -> loopQ (q + 1) curWrite
+                        else
+                            curWrite
 
-                baseIdx <- nextIdx
+                    let nextWrite = loopQ b writePos
+                    emitProducts (idx + 1) nextWrite
+                else
+                    writePos
+
+            let actualProductsCount = emitProducts 0 0
+
+            let effectiveProducts =
+                if actualProductsCount = products.Length then
+                    products
+                else
+                    Array.sub products 0 actualProductsCount
 
             let canMerge =
-                let productValues =
-                    products |> Seq.map (fun (_, _, v) -> v) |> Seq.distinct |> Seq.toArray
-
-                productValues
-                |> Array.forall (fun v -> op_add (Some v) None = Some v && op_add None (Some v) = Some v)
+                let rec checkAdd i =
+                    if i < effectiveProducts.Length then
+                        let (_, _, v) = effectiveProducts.[i]
+                        if op_add (Some v) None = Some v && op_add None (Some v) = Some v then
+                            checkAdd (i + 1)
+                        else
+                            false
+                    else
+                        true
+                checkAdd 0
 
             if canMerge then
-                let sortedProducts =
-                    products.ToArray()
-                    |> Array.sortWith (fun (i1, j1, _) (i2, j2, _) ->
+                Array.sortInPlaceWith
+                    (fun (i1, j1, _) (i2, j2, _) ->
                         let c = compare i1 i2
-
                         if c <> 0 then c else compare j1 j2)
+                    effectiveProducts
 
-                let result = ResizeArray<COOEntry<'c>>()
-                let mutable q = 0
+                let target = Array.zeroCreate effectiveProducts.Length
 
-                while q < sortedProducts.Length do
-                    let (i, j, v) = sortedProducts.[q]
-                    let mutable sum = Some v
-                    let mutable qq = q + 1
-                    let mutable advance = true
+                let rec reduceProducts q outIdx =
+                    if q < effectiveProducts.Length then
+                        let (i, j, v) = effectiveProducts.[q]
 
-                    while qq < sortedProducts.Length && advance do
-                        let (i', j', v') = sortedProducts.[qq]
+                        let rec sumDup qq curSum =
+                            if qq < effectiveProducts.Length then
+                                let (i', j', v') = effectiveProducts.[qq]
 
-                        if i' = i && j' = j then
-                            sum <- op_add sum (Some v')
-                            qq <- qq + 1
-                        else
-                            advance <- false
+                                if i' = i && j' = j then
+                                    sumDup (qq + 1) (op_add curSum (Some v'))
+                                else
+                                    qq, curSum
+                            else
+                                qq, curSum
 
-                    match sum with
-                    | Some value -> result.Add((i, j, value))
-                    | None -> ()
+                        let nextQ, finalSum = sumDup (q + 1) (Some v)
 
-                    q <- qq
+                        match finalSum with
+                        | Some value ->
+                            target.[outIdx] <- (i, j, value)
+                            reduceProducts nextQ (outIdx + 1)
+                        | None -> reduceProducts nextQ outIdx
+                    else
+                        outIdx
 
-                ArrayCOO.Create(m1.nrows, m2.ncols, result.ToArray()) |> Ok
+                let finalCount = reduceProducts 0 0
+
+                let resultArr =
+                    if finalCount = target.Length then
+                        target
+                    else
+                        Array.sub target 0 finalCount
+
+                ArrayCOO.Create(m1.nrows, m2.ncols, resultArr) |> Ok
             else
                 generalResult () |> Ok
         else
