@@ -288,14 +288,13 @@ let cooMapi (coo: ListCOO<'a>) f =
 let cooMapiValues (coo: ListCOO<'a>) f =
     cooMapInner coo (UnaryOp.ValuesOnlyIndexed f)
 
-let cooMap2 (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
-
 let cooMap2Values (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnly f)
 
 let cooMap2AllCells (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.AllCells f)
+
+let cooMap2 = cooMap2AllCells
 
 let cooMap2AtLeastOne (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValue f)
@@ -303,14 +302,13 @@ let cooMap2AtLeastOne (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
 let cooMap2LeftValues (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.LeftValuesOnly f)
 
-let cooMap2i (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
-    cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
-
 let cooMap2iValues (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.ValuesOnlyIndexed f)
 
 let cooMap2iAllCells (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.AllCellsIndexed f)
+
+let cooMap2i = cooMap2iAllCells
 
 let cooMap2iAtLeastOne (coo1: ListCOO<'a>) (coo2: ListCOO<'b>) f =
     cooMap2Inner coo1 coo2 (BinaryOp.AtLeastOneValueIndexed f)
@@ -335,11 +333,12 @@ let mxmcoo
                 match list with
                 | [] -> true
                 | (_, _, v) :: tail ->
-                    if op_mult (getL v) (getR v) = None then loop tail else false
+                    if Option.isNone (op_mult (getL v) (getR v)) then loop tail else false
+
             loop entries
 
         let canOptimize =
-            op_mult None None = None
+            Option.isNone (op_mult None None)
             && checkMultCondition entries1 (fun v -> Some v) (fun _ -> None)
             && checkMultCondition entries2 (fun _ -> None) (fun v -> Some v)
 
