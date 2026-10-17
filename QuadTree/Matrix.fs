@@ -192,11 +192,9 @@ let inline updateQuadrant row col (pr: uint64<rowindex>) (pc: uint64<colindex>) 
         mkNode nw ne sw c, d
 
 let get (matrix: SparseMatrix<'a>) (row: uint64<rowindex>) (col: uint64<colindex>) : Result<option<'a>, Error> =
-    if uint64 row >= uint64 matrix.nrows then
-        raise (System.ArgumentOutOfRangeException("row", "Row index is outside the matrix bounds."))
-    elif uint64 col >= uint64 matrix.ncols then
-        raise (System.ArgumentOutOfRangeException("col", "Column index is outside the matrix bounds."))
-    else
+    match checkBounds (uint64 matrix.nrows) (uint64 matrix.ncols) (uint64 row) (uint64 col) with
+    | Error e -> Error e
+    | Ok() ->
         let rec inner tree (pr: uint64<rowindex>) (pc: uint64<colindex>) (size: uint64) =
             match tree with
             | Leaf Dummy -> None
@@ -213,11 +211,9 @@ let set
     (col: uint64<colindex>)
     (value: 'a)
     : Result<SparseMatrix<'a>, Error> =
-    if uint64 row >= uint64 matrix.nrows then
-        raise (System.ArgumentOutOfRangeException("row", "Row index is outside the matrix bounds."))
-    elif uint64 col >= uint64 matrix.ncols then
-        raise (System.ArgumentOutOfRangeException("col", "Column index is outside the matrix bounds."))
-    else
+    match checkBounds (uint64 matrix.nrows) (uint64 matrix.ncols) (uint64 row) (uint64 col) with
+    | Error e -> Error e
+    | Ok() ->
         let rec inner tree (pr: uint64<rowindex>) (pc: uint64<colindex>) (size: uint64) =
             let halfSize = size / 2UL
 

@@ -131,7 +131,7 @@ let ``cooMapValues maps every stored value once`` (inp: Input) =
        |> Array.forall (fun (r, c, v) -> cooGet (mapped, r, c) = Ok(Some(v + 1)))
 
 [<Property(Arbitrary = [| typeof<InputArbs> |])>]
-let ``out-of-bounds access raises ArgumentOutOfRangeException`` (inp: Input) =
+let ``out-of-bounds access returns InconsistentSizeOfArguments`` (inp: Input) =
     let coo = toCoo inp
     let cooA = ArrayCOO(coo.nrows, coo.ncols, coo.list)
     let qt = fromCoordinateListUnchecked coo
@@ -142,11 +142,8 @@ let ``out-of-bounds access raises ArgumentOutOfRangeException`` (inp: Input) =
     Assert.Equal(Error Error.InconsistentSizeOfArguments, cooUpdate (cooA, nrows, 0UL<colindex>, 1))
     Assert.Equal(Error Error.InconsistentSizeOfArguments, cooA.[nrows, 0UL<colindex>])
 
-    Assert.Throws<ArgumentOutOfRangeException>(fun () -> Matrix.get qt nrows 0UL<colindex> |> ignore)
-    |> ignore
-
-    Assert.Throws<ArgumentOutOfRangeException>(fun () -> Matrix.set qt nrows 0UL<colindex> 1 |> ignore)
-    |> ignore
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, Matrix.get qt nrows 0UL<colindex>)
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, Matrix.set qt nrows 0UL<colindex> 1)
 
 let private cooWithDims (nrows: uint64) (ncols: uint64) (inp: Input) : CoordinateList<int> =
     let entries =

@@ -17,7 +17,7 @@ type COO<'T> =
     | List of ListCOO<'T>
 
 module Formats =
-    let create isArray r c l : COO<'T> =
+    let create isArray r c (l: COOEntry<'T> list) : COO<'T> =
         if isArray then
             COO.Array(ArrayCOO(r, c, l))
         else
@@ -1254,3 +1254,45 @@ let ``Formats.cooMap2i<int, int, int> isArray sizes mismatch`` (isArray: bool) =
     let f _i _j a b = None
 
     Assert.Equal(Error Error.InconsistentSizeOfArguments, Formats.cooMap2i<int, int, int> isArray c1 c2 f)
+
+
+
+[<Theory>]
+[<InlineData(true)>]
+[<InlineData(false)>]
+let ``mxmcoo falls back to generalResult when op_add None None is Some`` (isArray: bool) =
+    // A semiring where None + None = Some 0 (not zero-preserving addition)
+    let op_add a b =
+        match a, b with
+        | Some x, Some y -> Some(x + y)
+        | Some x, None -> Some x
+        | None, Some y -> Some y
+        | None, None -> Some 0
+
+    let op_mult a b =
+        match a, b with
+        | Some x, Some y -> Some(x * y)
+        | _ -> None
+
+    let e1 = [ (0UL<rowindex>, 0UL<colindex>, 2) ]
+    let e2 = [ (0UL<rowindex>, 0UL<colindex>, 3) ]
+
+    let c1 = Formats.create isArray 2UL<nrows> 2UL<ncols> e1
+    let c2 = Formats.create isArray 2UL<nrows> 2UL<ncols> e2
+
+    let res =
+        if isArray then
+            match c1, c2 with
+            | COO.Array a1, COO.Array a2 -> COOArray.mxmcoo op_add op_mult a1 a2 |> Result.map COO.Array
+            | _ -> failwith "unreachable"
+        else
+            match c1, c2 with
+            | COO.List l1, COO.List l2 -> COOList.mxmcoo op_add op_mult l1 l2 |> Result.map COO.List
+            | _ -> failwith "unreachable"
+
+    match res with
+    | Ok m ->
+        let arr = Formats.toArray<int> isArray m
+        // Since None + None = Some 0, all cells in 2x2 should be present
+        Assert.Equal(4, arr.Length)
+    | Error e -> failwithf "Unexpected error %A" e

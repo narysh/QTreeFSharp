@@ -4,9 +4,6 @@ open Common
 open Matrix
 open COOArray
 
-let private range (count: uint64) =
-    if count = 0UL then [] else [ 0UL .. count - 1UL ]
-
 [<Struct>]
 type ListCOO<'value> =
     val nrows: uint64<nrows>
@@ -345,6 +342,7 @@ let mxmcoo
 
         let canOptimize =
             Option.isNone (op_mult None None)
+            && Option.isNone (op_add None None)
             && checkMultCondition entries1 (fun v -> Some v) (fun _ -> None)
             && checkMultCondition entries2 (fun _ -> None) (fun v -> Some v)
 

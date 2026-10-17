@@ -38,15 +38,17 @@ type ArrayCOO<'value> =
 
     member this.list = this.entries
 
-    static member private SortEntries(list: COOEntry<'value> seq) =
-        let arr = Seq.toArray list
+    static member private SortEntries(entries: COOEntry<'value>[]) =
+        let arr = Array.copy entries
         System.Array.Sort(arr, entryComparer<'value>)
         arr
 
-    new(_nrows, _ncols, _list: COOEntry<'value> seq) =
+    new(_nrows, _ncols, _entries: COOEntry<'value>[]) =
         { nrows = _nrows
           ncols = _ncols
-          entries = ArrayCOO<'value>.SortEntries(_list) }
+          entries = ArrayCOO<'value>.SortEntries(_entries) }
+
+    new(_nrows, _ncols, _list: COOEntry<'value> list) = ArrayCOO<'value>(_nrows, _ncols, List.toArray _list)
 
     new(_nrows, _ncols, _entries: COOEntry<'value>[], _presorted: bool) =
         let sorted =
@@ -535,6 +537,7 @@ let mxmcoo
 
         let canOptimize =
             Option.isNone (op_mult None None)
+            && Option.isNone (op_add None None)
             && checkMultCondition m1.entries (fun v -> Some v) (fun _ -> None)
             && checkMultCondition m2.entries (fun _ -> None) (fun v -> Some v)
 
