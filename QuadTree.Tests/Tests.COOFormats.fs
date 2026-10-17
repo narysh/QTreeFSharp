@@ -1296,3 +1296,82 @@ let ``mxmcoo falls back to generalResult when op_add None None is Some`` (isArra
         // Since None + None = Some 0, all cells in 2x2 should be present
         Assert.Equal(4, arr.Length)
     | Error e -> failwithf "Unexpected error %A" e
+
+[<Theory>]
+[<InlineData(true)>]
+[<InlineData(false)>]
+let ``COO formats sort unsorted entries upon construction`` (isArray: bool) =
+    let entries =
+        [ (1UL<rowindex>, 1UL<colindex>, 10)
+          (0UL<rowindex>, 1UL<colindex>, 20)
+          (0UL<rowindex>, 0UL<colindex>, 30) ]
+
+    let coo = Formats.create isArray 2UL<nrows> 2UL<ncols> entries
+
+    Assert.Equal(Ok(Some 30), Formats.cooGet isArray (coo, 0UL<rowindex>, 0UL<colindex>))
+    Assert.Equal(Ok(Some 20), Formats.cooGet isArray (coo, 0UL<rowindex>, 1UL<colindex>))
+    Assert.Equal(Ok(Some 10), Formats.cooGet isArray (coo, 1UL<rowindex>, 1UL<colindex>))
+    Assert.Equal(Ok None, Formats.cooGet isArray (coo, 1UL<rowindex>, 0UL<colindex>))
+
+    let expected =
+        [ (0UL<rowindex>, 0UL<colindex>, 30)
+          (0UL<rowindex>, 1UL<colindex>, 20)
+          (1UL<rowindex>, 1UL<colindex>, 10) ]
+
+    Assert.Equal<COOEntry<int> list>(expected, Formats.toList isArray coo)
+
+[<Theory>]
+[<InlineData(true)>]
+[<InlineData(false)>]
+let ``COO formats deduplicate entries with last occurrence winning`` (isArray: bool) =
+    let entries =
+        [ (0UL<rowindex>, 1UL<colindex>, "first")
+          (0UL<rowindex>, 0UL<colindex>, "a")
+          (0UL<rowindex>, 1UL<colindex>, "last")
+          (0UL<rowindex>, 0UL<colindex>, "b") ]
+
+    let coo = Formats.create isArray 2UL<nrows> 2UL<ncols> entries
+
+    Assert.Equal(Ok(Some "b"), Formats.cooGet isArray (coo, 0UL<rowindex>, 0UL<colindex>))
+    Assert.Equal(Ok(Some "last"), Formats.cooGet isArray (coo, 0UL<rowindex>, 1UL<colindex>))
+
+    let expected =
+        [ (0UL<rowindex>, 0UL<colindex>, "b"); (0UL<rowindex>, 1UL<colindex>, "last") ]
+
+    Assert.Equal<COOEntry<string> list>(expected, Formats.toList isArray coo)
+
+[<Theory>]
+[<InlineData(true)>]
+[<InlineData(false)>]
+let ``COO formats filter out out-of-bounds entries in Create/Constructor`` (isArray: bool) =
+    let entries =
+        [ (0UL<rowindex>, 0UL<colindex>, 1)
+          (2UL<rowindex>, 0UL<colindex>, 2) // out of bounds: row >= 2
+          (0UL<rowindex>, 2UL<colindex>, 3) // out of bounds: col >= 2
+          (1UL<rowindex>, 1UL<colindex>, 4) ]
+
+    let coo = Formats.create isArray 2UL<nrows> 2UL<ncols> entries
+
+    let expected =
+        [ (0UL<rowindex>, 0UL<colindex>, 1); (1UL<rowindex>, 1UL<colindex>, 4) ]
+
+    Assert.Equal<COOEntry<int> list>(expected, Formats.toList isArray coo)
+
+[<Fact>]
+let ``ArrayCOO and ListCOO TryCreate validates bounds`` () =
+    let badEntries =
+        [ (0UL<rowindex>, 0UL<colindex>, 1); (2UL<rowindex>, 0UL<colindex>, 2) ]
+
+    let goodEntries =
+        [ (0UL<rowindex>, 0UL<colindex>, 1); (1UL<rowindex>, 1UL<colindex>, 2) ]
+
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, ArrayCOO<int>.TryCreate(2UL<nrows>, 2UL<ncols>, badEntries))
+    Assert.Equal(Error Error.InconsistentSizeOfArguments, ListCOO<int>.TryCreate(2UL<nrows>, 2UL<ncols>, badEntries))
+
+    match ArrayCOO<int>.TryCreate(2UL<nrows>, 2UL<ncols>, goodEntries) with
+    | Ok a -> Assert.Equal(2, a.entries.Length)
+    | Error e -> failwithf "Unexpected error %A" e
+
+    match ListCOO<int>.TryCreate(2UL<nrows>, 2UL<ncols>, goodEntries) with
+    | Ok l -> Assert.Equal(2, l.entries.Length)
+    | Error e -> failwithf "Unexpected error %A" e

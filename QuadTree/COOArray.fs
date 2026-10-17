@@ -30,6 +30,87 @@ let private isStrictlySorted (arr: COOEntry<'v>[]) =
 
     arr.Length <= 1 || loop 1
 
+let private areAllInBounds nrows ncols (arr: COOEntry<'v>[]) =
+    let rec loop i =
+        if i >= arr.Length then
+            true
+        else
+            let (r, c, _) = arr.[i]
+
+            if uint64 r < uint64 nrows && uint64 c < uint64 ncols then
+                loop (i + 1)
+            else
+                false
+
+    loop 0
+
+let private sortAndDeduplicate (arr: COOEntry<'v>[]) : COOEntry<'v>[] =
+    if isStrictlySorted arr then
+        arr
+    elif arr.Length = 0 then
+        arr
+    else
+        let tagged =
+            Array.init arr.Length (fun idx ->
+                let (r, c, v) = arr.[idx]
+                (r, c, v, idx))
+
+        System.Array.Sort(
+            tagged,
+            { new System.Collections.Generic.IComparer<uint64<rowindex> * uint64<colindex> * 'v * int> with
+                member _.Compare((r1, c1, _, idx1), (r2, c2, _, idx2)) =
+                    let c = compare r1 r2
+
+                    if c <> 0 then
+                        c
+                    else
+                        let cCol = compare c1 c2
+                        if cCol <> 0 then cCol else compare idx1 idx2 }
+        )
+
+        let rec countUnique i count =
+            if i < tagged.Length then
+                let (r1, c1, _, _) = tagged.[i]
+
+                let rec skipDups j =
+                    if j < tagged.Length then
+                        let (r2, c2, _, _) = tagged.[j]
+                        if r1 = r2 && c1 = c2 then skipDups (j + 1) else j
+                    else
+                        j
+
+                countUnique (skipDups (i + 1)) (count + 1)
+            else
+                count
+
+        let total = countUnique 0 0
+        let result = Array.zeroCreate total
+
+        let rec emitUnique i outIdx =
+            if i < tagged.Length then
+                let (r1, c1, _, _) = tagged.[i]
+
+                let rec findLast j lastIdx =
+                    if j < tagged.Length then
+                        let (r2, c2, _, _) = tagged.[j]
+
+                        if r1 = r2 && c1 = c2 then
+                            findLast (j + 1) j
+                        else
+                            j, lastIdx
+                    else
+                        j, lastIdx
+
+                let nextI, lastDupIdx = findLast (i + 1) i
+                let (r, c, v, _) = tagged.[lastDupIdx]
+                result.[outIdx] <- (r, c, v)
+                emitUnique nextI (outIdx + 1)
+            else
+                ()
+
+        emitUnique 0 0
+        result
+
 [<Struct>]
 type ArrayCOO<'value> =
     val nrows: uint64<nrows>
@@ -38,15 +119,22 @@ type ArrayCOO<'value> =
 
     member this.list = this.entries
 
-    static member private SortEntries(entries: COOEntry<'value>[]) =
-        let arr = Array.copy entries
-        System.Array.Sort(arr, entryComparer<'value>)
-        arr
+    static member private NormalizeEntries
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[])
+        : COOEntry<'value>[] =
+        let inBounds =
+            if areAllInBounds nrows ncols entries then
+                entries
+            else
+                entries
+                |> Array.filter (fun (r, c, _) -> uint64 r < uint64 nrows && uint64 c < uint64 ncols)
+
+        sortAndDeduplicate inBounds
 
     new(_nrows, _ncols, _entries: COOEntry<'value>[]) =
         { nrows = _nrows
           ncols = _ncols
-          entries = ArrayCOO<'value>.SortEntries(_entries) }
+          entries = ArrayCOO<'value>.NormalizeEntries(_nrows, _ncols, _entries) }
 
     new(_nrows, _ncols, _list: COOEntry<'value> list) = ArrayCOO<'value>(_nrows, _ncols, List.toArray _list)
 
@@ -55,7 +143,7 @@ type ArrayCOO<'value> =
             if _presorted then
                 _entries
             else
-                ArrayCOO<'value>.SortEntries(_entries)
+                ArrayCOO<'value>.NormalizeEntries(_nrows, _ncols, _entries)
 
         { nrows = _nrows
           ncols = _ncols
@@ -63,20 +151,38 @@ type ArrayCOO<'value> =
 
     static member Create(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[]) : ArrayCOO<'value> =
         let sorted =
-            if isStrictlySorted entries then
+            if isStrictlySorted entries && areAllInBounds nrows ncols entries then
                 entries
             else
-                ArrayCOO<'value>.SortEntries(entries)
+                ArrayCOO<'value>.NormalizeEntries(nrows, ncols, entries)
 
         ArrayCOO<'value>(nrows, ncols, sorted, true)
+
+    static member Create
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value> list)
+        : ArrayCOO<'value> =
+        ArrayCOO<'value>.Create(nrows, ncols, List.toArray entries)
+
+    static member TryCreate
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[])
+        : Result<ArrayCOO<'value>, Error> =
+        if areAllInBounds nrows ncols entries then
+            Ok(ArrayCOO<'value>.Create(nrows, ncols, entries))
+        else
+            Error Error.InconsistentSizeOfArguments
+
+    static member TryCreate
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value> list)
+        : Result<ArrayCOO<'value>, Error> =
+        ArrayCOO<'value>.TryCreate(nrows, ncols, List.toArray entries)
 
     static member CreatePresorted
         (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[])
         : ArrayCOO<'value> =
 #if DEBUG
         System.Diagnostics.Debug.Assert(
-            isStrictlySorted entries,
-            "ArrayCOO: entries must be strictly sorted by (row, col) without duplicates."
+            isStrictlySorted entries && areAllInBounds nrows ncols entries,
+            "ArrayCOO: entries must be strictly sorted by (row, col) without duplicates and within matrix bounds."
         )
 #endif
         ArrayCOO<'value>(nrows, ncols, entries, true)

@@ -4,16 +4,144 @@ open Common
 open Matrix
 open COOArray
 
+let private isStrictlySortedList (entries: COOEntry<'v> list) : bool =
+    let rec loop prev rest =
+        match rest with
+        | [] -> true
+        | (rCurr, cCurr, _) as curr :: tail ->
+            let (rPrev, cPrev, _) = prev
+
+            if rPrev < rCurr || (rPrev = rCurr && cPrev < cCurr) then
+                loop curr tail
+            else
+                false
+
+    match entries with
+    | []
+    | [ _ ] -> true
+    | head :: tail -> loop head tail
+
+let private areAllInBoundsList (nrows: uint64<nrows>) (ncols: uint64<ncols>) (entries: COOEntry<'v> list) : bool =
+    let nr = uint64 nrows
+    let nc = uint64 ncols
+
+    let rec loop rest =
+        match rest with
+        | [] -> true
+        | (r, c, _) :: tail -> if uint64 r < nr && uint64 c < nc then loop tail else false
+
+    loop entries
+
+let private sortAndDeduplicateList (entries: COOEntry<'v> list) : COOEntry<'v> list =
+    if isStrictlySortedList entries then
+        entries
+    elif List.isEmpty entries then
+        entries
+    else
+        let tagged = entries |> List.mapi (fun idx (r, c, v) -> (r, c, v, idx))
+
+        let sortedTagged =
+            tagged
+            |> List.sortWith (fun (r1, c1, _, idx1) (r2, c2, _, idx2) ->
+                let c = compare r1 r2
+
+                if c <> 0 then
+                    c
+                else
+                    let cc = compare c1 c2
+                    if cc <> 0 then cc else compare idx1 idx2)
+
+        let rec deduplicate acc curEntry rest =
+            match rest with
+            | [] ->
+                let (r, c, v, _) = curEntry
+                List.rev ((r, c, v) :: acc)
+            | ((r2, c2, _, _) as nextEntry) :: tail ->
+                let (r1, c1, _, _) = curEntry
+
+                if r1 = r2 && c1 = c2 then
+                    deduplicate acc nextEntry tail
+                else
+                    let (r, c, v, _) = curEntry
+                    deduplicate ((r, c, v) :: acc) nextEntry tail
+
+        match sortedTagged with
+        | [] -> []
+        | head :: tail -> deduplicate [] head tail
+
 [<Struct>]
 type ListCOO<'value> =
     val nrows: uint64<nrows>
     val ncols: uint64<ncols>
     val entries: COOEntry<'value> list
 
+    member this.list = this.entries
+
+    static member private NormalizeEntries
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value> list)
+        : COOEntry<'value> list =
+        let nr = uint64 nrows
+        let nc = uint64 ncols
+
+        let inBounds =
+            if areAllInBoundsList nrows ncols entries then
+                entries
+            else
+                entries |> List.filter (fun (r, c, _) -> uint64 r < nr && uint64 c < nc)
+
+        sortAndDeduplicateList inBounds
+
     new(_nrows, _ncols, _entries: COOEntry<'value> list) =
         { nrows = _nrows
           ncols = _ncols
-          entries = _entries }
+          entries = ListCOO<'value>.NormalizeEntries(_nrows, _ncols, _entries) }
+
+    new(_nrows, _ncols, _entries: COOEntry<'value> list, _presorted: bool) =
+        let sorted =
+            if _presorted then
+                _entries
+            else
+                ListCOO<'value>.NormalizeEntries(_nrows, _ncols, _entries)
+
+        { nrows = _nrows
+          ncols = _ncols
+          entries = sorted }
+
+    static member Create(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value> list) : ListCOO<'value> =
+        let sorted =
+            if isStrictlySortedList entries && areAllInBoundsList nrows ncols entries then
+                entries
+            else
+                ListCOO<'value>.NormalizeEntries(nrows, ncols, entries)
+
+        ListCOO<'value>(nrows, ncols, sorted, true)
+
+    static member Create(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[]) : ListCOO<'value> =
+        ListCOO<'value>.Create(nrows, ncols, Array.toList entries)
+
+    static member TryCreate
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value> list)
+        : Result<ListCOO<'value>, Error> =
+        if areAllInBoundsList nrows ncols entries then
+            Ok(ListCOO<'value>.Create(nrows, ncols, entries))
+        else
+            Error Error.InconsistentSizeOfArguments
+
+    static member TryCreate
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[])
+        : Result<ListCOO<'value>, Error> =
+        ListCOO<'value>.TryCreate(nrows, ncols, Array.toList entries)
+
+    static member CreatePresorted
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value> list)
+        : ListCOO<'value> =
+#if DEBUG
+        System.Diagnostics.Debug.Assert(
+            isStrictlySortedList entries && areAllInBoundsList nrows ncols entries,
+            "ListCOO: entries must be strictly sorted by (row, col) without duplicates and within matrix bounds."
+        )
+#endif
+        ListCOO<'value>(nrows, ncols, entries, true)
 
     member this.Item
         with get (rowindex: uint64<rowindex>, colindex: uint64<colindex>): Result<option<'value>, Error> =
@@ -37,7 +165,7 @@ let cooGet (coo: ListCOO<'a>, rowindex: uint64<rowindex>, colindex: uint64<colin
     coo.[rowindex, colindex]
 
 let fromArray (coo: ArrayCOO<'a>) : ListCOO<'a> =
-    ListCOO<'a>(coo.nrows, coo.ncols, Array.toList coo.entries)
+    ListCOO.CreatePresorted(coo.nrows, coo.ncols, Array.toList coo.entries)
 
 let toArray (coo: ListCOO<'a>) : ArrayCOO<'a> =
     ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, Array.ofList coo.entries)
@@ -65,7 +193,7 @@ let cooUpdate
                 else
                     loop tail ((i, j, v) :: acc) false
 
-        Ok(ListCOO<'a>(coo.nrows, coo.ncols, loop coo.entries [] false))
+        Ok(ListCOO.CreatePresorted(coo.nrows, coo.ncols, loop coo.entries [] false))
 
 let private cooMapInner (coo: ListCOO<'a>) (op: UnaryOp<'a, 'b>) : ListCOO<'b> =
     let result =
@@ -145,7 +273,7 @@ let private cooMapInner (coo: ListCOO<'a>) (op: UnaryOp<'a, 'b>) : ListCOO<'b> =
 
             loopRow 0UL coo.entries []
 
-    ListCOO<'b>(coo.nrows, coo.ncols, result)
+    ListCOO.CreatePresorted(coo.nrows, coo.ncols, result)
 
 let private mergeBinary (l1: COOEntry<'a> list) (l2: COOEntry<'b> list) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c> list =
     let rec loop acc rest1 rest2 =
@@ -276,7 +404,7 @@ let private cooMap2Inner
                 loopRow 0UL coo1.entries coo2.entries []
             | _ -> mergeBinary coo1.entries coo2.entries op
 
-        ListCOO<'c>(nrows, ncols, result) |> Ok
+        ListCOO.CreatePresorted(nrows, ncols, result) |> Ok
 
 let cooMap (coo: ListCOO<'a>) f = cooMapInner coo (UnaryOp.AllCells f)
 
@@ -383,7 +511,7 @@ let mxmcoo
                     List.rev acc
 
             let result = loopRow 0UL []
-            ListCOO<'c>(m1.nrows, m2.ncols, result)
+            ListCOO.CreatePresorted(m1.nrows, m2.ncols, result)
 
         if canOptimize then
             let m1ByRow = entries1 |> List.groupBy (fun (i, _, _) -> i) |> Map.ofList
@@ -456,7 +584,7 @@ let mxmcoo
                     | [] -> []
                     | (i, j, v) :: tail -> reduceAdjacent [] (i, j) (Some v) tail
 
-                ListCOO<'c>(m1.nrows, m2.ncols, grouped) |> Ok
+                ListCOO.CreatePresorted(m1.nrows, m2.ncols, grouped) |> Ok
             else
                 generalResult () |> Ok
         else
