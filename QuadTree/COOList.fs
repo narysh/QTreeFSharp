@@ -342,7 +342,6 @@ let mxmcoo
 
         let canOptimize =
             Option.isNone (op_mult None None)
-            && Option.isNone (op_add None None)
             && checkMultCondition entries1 (fun v -> Some v) (fun _ -> None)
             && checkMultCondition entries2 (fun _ -> None) (fun v -> Some v)
 
@@ -426,7 +425,7 @@ let mxmcoo
 
                 loop list
 
-            let canMerge = checkAddCondition result
+            let canMerge = Option.isNone (op_add None None) && checkAddCondition result
 
             if canMerge then
                 let sorted =

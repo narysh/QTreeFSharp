@@ -109,7 +109,7 @@ let cooUpdate
     | Error e -> Error e
     | Ok() ->
         let idx =
-            System.Array.BinarySearch(coo.entries, (rowindex, colindex, value), entryComparer<'a>)
+            System.Array.BinarySearch(coo.entries, (rowindex, colindex, Unchecked.defaultof<'a>), entryComparer<'a>)
 
         if idx >= 0 then
             let arr = Array.copy coo.entries
@@ -537,7 +537,6 @@ let mxmcoo
 
         let canOptimize =
             Option.isNone (op_mult None None)
-            && Option.isNone (op_add None None)
             && checkMultCondition m1.entries (fun v -> Some v) (fun _ -> None)
             && checkMultCondition m2.entries (fun _ -> None) (fun v -> Some v)
 
@@ -658,18 +657,19 @@ let mxmcoo
                     Array.sub products 0 actualProductsCount
 
             let canMerge =
-                let rec checkAdd i =
-                    if i < effectiveProducts.Length then
-                        let (_, _, v) = effectiveProducts.[i]
+                Option.isNone (op_add None None)
+                && (let rec checkAdd i =
+                        if i < effectiveProducts.Length then
+                            let (_, _, v) = effectiveProducts.[i]
 
-                        if op_add (Some v) None = Some v && op_add None (Some v) = Some v then
-                            checkAdd (i + 1)
+                            if op_add (Some v) None = Some v && op_add None (Some v) = Some v then
+                                checkAdd (i + 1)
+                            else
+                                false
                         else
-                            false
-                    else
-                        true
+                            true
 
-                checkAdd 0
+                    checkAdd 0)
 
             if canMerge then
                 System.Array.Sort(effectiveProducts, entryComparer<'c>)
