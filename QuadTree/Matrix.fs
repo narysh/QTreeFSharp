@@ -179,17 +179,13 @@ let inline updateQuadrant row col (pr: uint64<rowindex>) (pc: uint64<colindex>) 
 
     if uint64 row < uint64 midR then
         if uint64 col < uint64 midC then
-            let c, d = action nw pr pc
-            mkNode c ne sw se, d
+            action nw pr pc |> Result.map (fun (c, d) -> mkNode c ne sw se, d)
         else
-            let c, d = action ne pr midC
-            mkNode nw c sw se, d
+            action ne pr midC |> Result.map (fun (c, d) -> mkNode nw c sw se, d)
     else if uint64 col < uint64 midC then
-        let c, d = action sw midR pc
-        mkNode nw ne c se, d
+        action sw midR pc |> Result.map (fun (c, d) -> mkNode nw ne c se, d)
     else
-        let c, d = action se midR midC
-        mkNode nw ne sw c, d
+        action se midR midC |> Result.map (fun (c, d) -> mkNode nw ne sw c, d)
 
 let get (matrix: SparseMatrix<'a>) (row: uint64<rowindex>) (col: uint64<colindex>) : Result<option<'a>, Error> =
     match checkBounds (uint64 matrix.nrows) (uint64 matrix.ncols) (uint64 row) (uint64 col) with
@@ -228,9 +224,9 @@ let set
                         | None, Some _ -> -1L
                         | _ -> 0L
 
-                    Leaf(UserValue newVal), delta
-                | Leaf Dummy -> Leaf(UserValue(Some value)), 1L
-                | _ -> failwith "Unreachable"
+                    Ok(Leaf(UserValue newVal), delta)
+                | Leaf Dummy -> Ok(Leaf(UserValue(Some value)), 1L)
+                | _ -> Error Error.InconsistentStructureOfStorages
             else
                 let (nw, ne, sw, se) =
                     match tree with
@@ -239,11 +235,10 @@ let set
 
                 updateQuadrant row col pr pc halfSize nw ne sw se (fun quad r c -> inner quad r c halfSize)
 
-        let storage, deltaNNZ =
-            inner matrix.storage.data (0UL<rowindex>) (0UL<colindex>) (uint64 matrix.storage.size)
-
-        let nvals = uint64 (int64 matrix.nvals + deltaNNZ) * 1UL<nvals>
-        Ok(SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage)))
+        inner matrix.storage.data (0UL<rowindex>) (0UL<colindex>) (uint64 matrix.storage.size)
+        |> Result.map (fun (storage, deltaNNZ) ->
+            let nvals = uint64 (int64 matrix.nvals + deltaNNZ) * 1UL<nvals>
+            SparseMatrix(matrix.nrows, matrix.ncols, nvals, Storage(matrix.storage.size, storage)))
 
 type UnaryOp<'a, 'b> =
     | ValuesOnly of ('a -> Option<'b>)

@@ -542,51 +542,41 @@ let mxmcoo
 
         let generalResult () =
             let m1Map = m1.entries |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
-
             let m2Map = m2.entries |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
-
             let kCount = uint64 m1.ncols
-            let totalCells = int (uint64 m1.nrows * uint64 m2.ncols)
-            let result = Array.zeroCreate totalCells
 
-            let rec loopRow i outIdx =
+            let rec loopRow i acc =
                 if i < uint64 m1.nrows then
                     let ri = i * 1UL<rowindex>
 
-                    let rec loopCol j curOut =
+                    let rec loopCol j colAcc =
                         if j < uint64 m2.ncols then
                             let cj = j * 1UL<colindex>
 
-                            let rec loopK k acc =
+                            let rec loopK k accK =
                                 if k < kCount then
                                     let key1 = (ri, k * 1UL<colindex>)
                                     let key2 = (k * 1UL<rowindex>, cj)
-                                    let acc' = op_add acc (op_mult (Map.tryFind key1 m1Map) (Map.tryFind key2 m2Map))
-                                    loopK (k + 1UL) acc'
+                                    let accK' = op_add accK (op_mult (Map.tryFind key1 m1Map) (Map.tryFind key2 m2Map))
+                                    loopK (k + 1UL) accK'
                                 else
-                                    acc
+                                    accK
 
-                            match loopK 0UL None with
-                            | Some value ->
-                                result.[curOut] <- (ri, cj, value)
-                                loopCol (j + 1UL) (curOut + 1)
-                            | None -> loopCol (j + 1UL) curOut
+                            let colAcc' =
+                                match loopK 0UL None with
+                                | Some value -> (ri, cj, value) :: colAcc
+                                | None -> colAcc
+
+                            loopCol (j + 1UL) colAcc'
                         else
-                            curOut
+                            colAcc
 
-                    let nextOut = loopCol 0UL outIdx
-                    loopRow (i + 1UL) nextOut
+                    let rowAcc = loopCol 0UL acc
+                    loopRow (i + 1UL) rowAcc
                 else
-                    outIdx
+                    List.rev acc
 
-            let total = loopRow 0UL 0
-
-            let finalArr =
-                if total = result.Length then
-                    result
-                else
-                    Array.sub result 0 total
-
+            let finalArr = loopRow 0UL [] |> List.toArray
             ArrayCOO.CreatePresorted(m1.nrows, m2.ncols, finalArr)
 
         if canOptimize then
