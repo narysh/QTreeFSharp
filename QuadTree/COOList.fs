@@ -27,9 +27,12 @@ type ListCOO<'value> =
                     match list with
                     | [] -> None
                     | (i, j, v) :: tail ->
-                        if i = rowindex && j = colindex then Some v
-                        elif i > rowindex || (i = rowindex && j > colindex) then None
-                        else findEntry tail
+                        if i = rowindex && j = colindex then
+                            Some v
+                        elif i > rowindex || (i = rowindex && j > colindex) then
+                            None
+                        else
+                            findEntry tail
 
                 Ok(findEntry this.entries)
 
@@ -333,7 +336,10 @@ let mxmcoo
                 match list with
                 | [] -> true
                 | (_, _, v) :: tail ->
-                    if Option.isNone (op_mult (getL v) (getR v)) then loop tail else false
+                    if Option.isNone (op_mult (getL v) (getR v)) then
+                        loop tail
+                    else
+                        false
 
             loop entries
 

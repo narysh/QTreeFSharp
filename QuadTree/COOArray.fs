@@ -22,6 +22,7 @@ let private isStrictlySorted (arr: COOEntry<'v>[]) =
         else
             let (rPrev, cPrev, _) = arr.[i - 1]
             let (rCurr, cCurr, _) = arr.[i]
+
             if rPrev < rCurr || (rPrev = rCurr && cPrev < cCurr) then
                 loop (i + 1)
             else
@@ -67,7 +68,9 @@ type ArrayCOO<'value> =
 
         ArrayCOO<'value>(nrows, ncols, sorted, true)
 
-    static member CreatePresorted(nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[]) : ArrayCOO<'value> =
+    static member CreatePresorted
+        (nrows: uint64<nrows>, ncols: uint64<ncols>, entries: COOEntry<'value>[])
+        : ArrayCOO<'value> =
 #if DEBUG
         System.Diagnostics.Debug.Assert(
             isStrictlySorted entries,
@@ -137,7 +140,13 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
                 outIdx
 
         let total = loop 0 0
-        let res = if total = target.Length then target else Array.sub target 0 total
+
+        let res =
+            if total = target.Length then
+                target
+            else
+                Array.sub target 0 total
+
         ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, res)
     | UnaryOp.ValuesOnlyIndexed f ->
         let target = Array.zeroCreate coo.entries.Length
@@ -155,7 +164,13 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
                 outIdx
 
         let total = loop 0 0
-        let res = if total = target.Length then target else Array.sub target 0 total
+
+        let res =
+            if total = target.Length then
+                target
+            else
+                Array.sub target 0 total
+
         ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, res)
     | UnaryOp.AllCells f ->
         match f None with
@@ -175,7 +190,13 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
                     outIdx
 
             let total = loop 0 0
-            let res = if total = target.Length then target else Array.sub target 0 total
+
+            let res =
+                if total = target.Length then
+                    target
+                else
+                    Array.sub target 0 total
+
             ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, res)
         | Some fnone ->
             let totalCells = int (uint64 coo.nrows * uint64 coo.ncols)
@@ -219,7 +240,13 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
                     outIdx
 
             let total = loopRow 0UL 0 0
-            let finalArr = if total = target.Length then target else Array.sub target 0 total
+
+            let finalArr =
+                if total = target.Length then
+                    target
+                else
+                    Array.sub target 0 total
+
             ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, finalArr)
     | UnaryOp.AllCellsIndexed f ->
         let totalCells = int (uint64 coo.nrows * uint64 coo.ncols)
@@ -258,7 +285,13 @@ let private cooMapInner (coo: ArrayCOO<'a>) (op: UnaryOp<'a, 'b>) : ArrayCOO<'b>
                 outIdx
 
         let total = loopRow 0UL 0 0
-        let finalArr = if total = target.Length then target else Array.sub target 0 total
+
+        let finalArr =
+            if total = target.Length then
+                target
+            else
+                Array.sub target 0 total
+
         ArrayCOO.CreatePresorted(coo.nrows, coo.ncols, finalArr)
 
 let private mergeBinary (a1: COOEntry<'a>[]) (a2: COOEntry<'b>[]) (op: BinaryOp<'a, 'b, 'c>) : COOEntry<'c>[] =
@@ -377,7 +410,11 @@ let private cooMap2Inner
                             outIdx
 
                     let total = loopRow 0UL 0 0 0
-                    if total = target.Length then target else Array.sub target 0 total
+
+                    if total = target.Length then
+                        target
+                    else
+                        Array.sub target 0 total
             | BinaryOp.AllCellsIndexed f ->
                 let totalCells = int (uint64 nrows * uint64 ncols)
                 let target = Array.zeroCreate totalCells
@@ -426,7 +463,11 @@ let private cooMap2Inner
                         outIdx
 
                 let total = loopRow 0UL 0 0 0
-                if total = target.Length then target else Array.sub target 0 total
+
+                if total = target.Length then
+                    target
+                else
+                    Array.sub target 0 total
             | _ -> mergeBinary coo1.entries coo2.entries op
 
         ArrayCOO.CreatePresorted(nrows, ncols, result) |> Ok
@@ -482,12 +523,14 @@ let mxmcoo
             let rec loop i =
                 if i < arr.Length then
                     let (_, _, v) = arr.[i]
+
                     if Option.isNone (op_mult (getL v) (getR v)) then
                         loop (i + 1)
                     else
                         false
                 else
                     true
+
             loop 0
 
         let canOptimize =
@@ -496,11 +539,9 @@ let mxmcoo
             && checkMultCondition m2.entries (fun _ -> None) (fun v -> Some v)
 
         let generalResult () =
-            let m1Map =
-                m1.entries |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
+            let m1Map = m1.entries |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
 
-            let m2Map =
-                m2.entries |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
+            let m2Map = m2.entries |> Array.map (fun (i, j, v) -> ((i, j), v)) |> Map.ofArray
 
             let kCount = uint64 m1.ncols
             let totalCells = int (uint64 m1.nrows * uint64 m2.ncols)
@@ -537,7 +578,13 @@ let mxmcoo
                     outIdx
 
             let total = loopRow 0UL 0
-            let finalArr = if total = result.Length then result else Array.sub result 0 total
+
+            let finalArr =
+                if total = result.Length then
+                    result
+                else
+                    Array.sub result 0 total
+
             ArrayCOO.CreatePresorted(m1.nrows, m2.ncols, finalArr)
 
         if canOptimize then
@@ -611,12 +658,14 @@ let mxmcoo
                 let rec checkAdd i =
                     if i < effectiveProducts.Length then
                         let (_, _, v) = effectiveProducts.[i]
+
                         if op_add (Some v) None = Some v && op_add None (Some v) = Some v then
                             checkAdd (i + 1)
                         else
                             false
                     else
                         true
+
                 checkAdd 0
 
             if canMerge then

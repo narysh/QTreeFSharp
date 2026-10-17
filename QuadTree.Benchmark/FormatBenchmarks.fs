@@ -361,4 +361,3 @@ type DenseFormatBenchmark() =
         match LinearAlgebra.mxm op_add op_mult qtMatrix qtMatrix with
         | Ok result -> resultQt <- result
         | Error _ -> failwith "mxm failed"
-
